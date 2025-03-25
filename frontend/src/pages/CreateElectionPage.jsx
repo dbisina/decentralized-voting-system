@@ -168,7 +168,7 @@ const CreateElectionPage = () => {
           });
           
           // Add candidate to blockchain
-          await useElections().addCandidate(result.electionId, candidate.name, candidateIpfsCid);
+          await addCandidate(result.electionId, candidate.name, candidateIpfsCid);
         }
         
         // Success message

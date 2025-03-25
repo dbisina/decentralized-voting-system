@@ -81,7 +81,7 @@ class AuthService {
       const message = this._createSignMessage(address, nonce);
       
       // Request signature from wallet
-      const provider = new ethers.BrowserProvider(window.ethereum);
+      const provider = new ethers.providers.Web3Provider(window.ethereum);
       const signer = provider.getSigner();
       const signature = await signer.signMessage(message);
       

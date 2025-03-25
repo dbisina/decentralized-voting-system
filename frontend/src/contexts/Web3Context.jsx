@@ -37,7 +37,7 @@ export function Web3Provider({ children }) {
 
       // Check if MetaMask is installed
       if (window.ethereum) {
-        const ethersProvider = new ethers.BrowserProvider(window.ethereum);
+        const ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
         setProvider(ethersProvider);
 
         // Get network information
@@ -154,7 +154,7 @@ export function Web3Provider({ children }) {
       
       await window.ethereum.request({
         method: "wallet_switchEthereumChain",
-        params: [{ chainId: ethers.hexlify(chainId) }]
+        params: [{ chainId: ethers.utils.hexlify(chainId) }]
       });
       
       // Reload the page to get the new network
@@ -167,7 +167,7 @@ export function Web3Provider({ children }) {
           
           if (chainId === 80001) {
             networkData = {
-              chainId: ethers.hexlify(80001),
+              chainId: ethers.utils.hexlify(80001),
               chainName: "Mumbai Testnet",
               nativeCurrency: {
                 name: "MATIC",
@@ -179,7 +179,7 @@ export function Web3Provider({ children }) {
             };
           } else if (chainId === 5) {
             networkData = {
-              chainId: ethers.hexlify(5),
+              chainId: ethers.utils.hexlify(5),
               chainName: "Goerli Testnet",
               nativeCurrency: {
                 name: "ETH",
