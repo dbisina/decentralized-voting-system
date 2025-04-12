@@ -10,6 +10,11 @@ import VoteCastingPage from './pages/VoteCastingPage';
 import ElectionManagement from './pages/ElectionManagement';
 import ResultsPage from './pages/ResultsPage';
 import CreateElectionPage from './pages/CreateElectionPage';
+import AboutPage from './pages/AboutPage';
+import FAQPage from './pages/FAQPage';
+import ProfilePage from './pages/ProfilePage';
+//import SettingsPage from './pages/SettingsPage';
+import HelpPage from './pages/HelpPage';
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -32,6 +37,8 @@ const App = () => {
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<HomePage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="/faq" element={<FAQPage />} />
             
             {/* Protected Routes */}
             <Route 
@@ -71,6 +78,30 @@ const App = () => {
               element={
                 <ProtectedRoute>
                   <CreateElectionPage />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="/profile" 
+              element={
+                <ProtectedRoute>
+                  <ProfilePage />
+                </ProtectedRoute>
+              } 
+            />
+            {/*<Route 
+              path="/settings" 
+              element={
+                <ProtectedRoute>
+                  <SettingsPage />
+                </ProtectedRoute>
+              } 
+            />*/}
+            <Route 
+              path="/help" 
+              element={
+                <ProtectedRoute>
+                  <HelpPage />
                 </ProtectedRoute>
               } 
             />
