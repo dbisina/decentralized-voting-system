@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { ethers } from 'ethers';
 import VotingSystemABI from '../contracts/DecentralizedVotingSystem.json';
 
@@ -7,7 +7,7 @@ const CONTRACT_ADDRESSES = {
   1: '', // Ethereum Mainnet (not deployed)
   5: '0x3B9f743B648aF8a8e31f542935D5a56d5E4d5E4', // Goerli Testnet
   80001: '0x2C78f1b70Ccf63CDEe49F9233e9fAa99D43AA07e', // Mumbai Testnet
-  1337: '0x5FbDB2315678afecb367f032d93F642f64180aa3' // Local development
+  1337: '0x411d6b98a4f7bd164bd7f574d24b5f37a6824ae3' // Local development
 };
 
 // The default network ID for development
@@ -209,8 +209,8 @@ export function Web3Provider({ children }) {
     }
   }, []);
 
-  // Value to be provided to consumers
-  const value = {
+  // Memoize value to be provided to consumers
+  const value = useMemo(() => ({
     provider,
     signer,
     contract,
@@ -222,7 +222,18 @@ export function Web3Provider({ children }) {
     disconnectWallet,
     switchNetwork,
     supportedNetworks: Object.keys(CONTRACT_ADDRESSES).map(Number)
-  };
+  }), [
+    provider, 
+    signer, 
+    contract, 
+    account, 
+    networkId, 
+    isLoading, 
+    error, 
+    connectWallet, 
+    disconnectWallet, 
+    switchNetwork
+  ]);
 
   return (
     <Web3Context.Provider value={value}>

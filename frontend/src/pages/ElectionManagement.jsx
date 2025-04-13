@@ -79,6 +79,9 @@ const ElectionManagement = () => {
     setConfirmDelete(electionId);
   };
   
+  const handleManageRegistrations = (electionId) => {
+    navigate(`/manage-registrations/${electionId}`);
+  };
   // Confirm election deletion
   const confirmDeleteElection = async () => {
     try {
@@ -290,6 +293,8 @@ const ElectionManagement = () => {
                           >
                             <Info size={16} />
                           </Button>
+
+      
                         )}
                         
                         {election.status === 'ended' && !election.finalized && (
@@ -321,6 +326,20 @@ const ElectionManagement = () => {
                             >
                               <Trash2 size={16} />
                             </Button>
+                            
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => {
+                                // Log to see what's being passed
+                                console.log("Election ID:", election.id);
+                                navigate(`/manage-registrations/${election.id.toString()}`);
+                              }}
+                              className="ml-2"
+                            >
+                              <Users size={16} className="mr-1" />
+                              Manage Voters
+                            </Button>
                           </>
                         )}
                         
@@ -332,6 +351,8 @@ const ElectionManagement = () => {
                         >
                           <ChevronDown size={16} />
                         </Button>
+
+              
                       </div>
                     </td>
                   </tr>
@@ -453,6 +474,7 @@ const ElectionManagement = () => {
               >
                 Delete
               </Button>
+              
             </div>
           </div>
         </div>

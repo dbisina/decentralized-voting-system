@@ -15,6 +15,9 @@ import FAQPage from './pages/FAQPage';
 import ProfilePage from './pages/ProfilePage';
 //import SettingsPage from './pages/SettingsPage';
 import HelpPage from './pages/HelpPage';
+import VoterRegistrationPage from './pages/VotersRegisterationPage';
+import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -34,11 +37,12 @@ const App = () => {
     <Router>
       <Web3Provider>
         <AuthProvider>
-          <Routes>
+        <Routes>
             {/* Public Routes */}
             <Route path="/" element={<HomePage />} />
             <Route path="/about" element={<AboutPage />} />
             <Route path="/faq" element={<FAQPage />} />
+            <Route path="/register/:electionId/:registrationCode" element={<VoterRegistrationPage />} />
             
             {/* Protected Routes */}
             <Route 
@@ -49,6 +53,7 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
+            
             <Route 
               path="/vote/:electionId" 
               element={
@@ -57,6 +62,7 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
+            
             <Route 
               path="/election/:electionId" 
               element={
@@ -65,6 +71,7 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
+            
             <Route 
               path="/manage" 
               element={
@@ -73,6 +80,7 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
+            
             <Route 
               path="/create-election" 
               element={
@@ -81,6 +89,7 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
+            
             <Route 
               path="/profile" 
               element={
@@ -89,14 +98,25 @@ const App = () => {
                 </ProtectedRoute>
               } 
             />
-            {/*<Route 
+            
+            <Route 
               path="/settings" 
               element={
                 <ProtectedRoute>
                   <SettingsPage />
                 </ProtectedRoute>
               } 
-            />*/}
+            />
+            
+            <Route 
+              path="/manage-registrations/:electionId" 
+              element={
+                <ProtectedRoute>
+                  <VoterRegistrationManagementPage />
+                </ProtectedRoute>
+              } 
+            />
+            
             <Route 
               path="/help" 
               element={

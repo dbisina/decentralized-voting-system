@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useWeb3 } from './Web3Context';
 import AuthService from '../services/authService';
 
@@ -16,18 +16,25 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  const authService = new AuthService();
+  // Memoize the authService to prevent recreation on each render
+  const authService = useMemo(() => new AuthService(), []);
   
-  // Set user when account changes
+  // Check user status when account changes
   useEffect(() => {
+    let isMounted = true;
+    
     const checkUserStatus = async () => {
+      if (!isMounted) return;
+      
       setLoading(true);
       try {
         if (account) {
           // If we have a connected wallet, set user data
           const userData = await authService.getUserProfile(account);
-          setUser(userData || { address: account }); // Use basic info if no profile found
-          localStorage.setItem('isConnected', 'true');
+          if (isMounted) {
+            setUser(userData || { address: account }); // Use basic info if no profile found
+            localStorage.setItem('isConnected', 'true');
+          }
         } else {
           // If no wallet connected, check if there's a session
           const isConnected = localStorage.getItem('isConnected') === 'true';
@@ -36,31 +43,38 @@ export function AuthProvider({ children }) {
             // Try to reconnect wallet
             const reconnectedAccount = await connectWallet();
             
-            if (!reconnectedAccount) {
+            if (!reconnectedAccount && isMounted) {
               // If reconnection failed, clear session
               setUser(null);
               localStorage.removeItem('isConnected');
             }
-          } else {
+          } else if (isMounted) {
             setUser(null);
           }
         }
-        setError(null);
+        if (isMounted) setError(null);
       } catch (err) {
         console.error('Authentication error:', err);
-        setError('Failed to authenticate user');
-        setUser(null);
-        localStorage.removeItem('isConnected');
+        if (isMounted) {
+          setError('Failed to authenticate user');
+          setUser(null);
+          localStorage.removeItem('isConnected');
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
     
     checkUserStatus();
+    
+    // Cleanup function to prevent state updates after unmount
+    return () => {
+      isMounted = false;
+    };
   }, [account, connectWallet, authService]);
   
-  // Connect user account
-  const login = async () => {
+  // Connect user account - memoize to prevent recreation on each render
+  const login = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -84,10 +98,10 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [connectWallet, authService]);
   
-  // Disconnect user account
-  const logout = async () => {
+  // Disconnect user account - memoize to prevent recreation on each render
+  const logout = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -104,10 +118,10 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [disconnectWallet]);
   
-  // Update user profile
-  const updateProfile = async (profileData) => {
+  // Update user profile - memoize to prevent recreation on each render
+  const updateProfile = useCallback(async (profileData) => {
     try {
       setLoading(true);
       setError(null);
@@ -120,10 +134,10 @@ export function AuthProvider({ children }) {
       const updatedProfile = await authService.updateUserProfile(account, profileData);
       
       // Update local state
-      setUser({
-        ...user,
+      setUser(prevUser => ({
+        ...prevUser,
         ...updatedProfile
-      });
+      }));
       
       return updatedProfile;
     } catch (err) {
@@ -133,15 +147,15 @@ export function AuthProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [account, authService]);
   
-  // Check if a user is an admin
-  const isAdmin = () => {
+  // Check if a user is an admin - memoize to prevent recreation on each render
+  const isAdmin = useCallback(() => {
     return user && user.isAdmin === true;
-  };
+  }, [user]);
   
-  // Provide the auth context value
-  const value = {
+  // Memoize the auth context value to prevent unnecessary rerenders
+  const value = useMemo(() => ({
     user,
     loading,
     error,
@@ -150,7 +164,7 @@ export function AuthProvider({ children }) {
     updateProfile,
     isAdmin,
     isAuthenticated: !!user
-  };
+  }), [user, loading, error, login, logout, updateProfile, isAdmin]);
   
   return (
     <AuthContext.Provider value={value}>
