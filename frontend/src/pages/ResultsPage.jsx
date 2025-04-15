@@ -4,6 +4,8 @@ import { ArrowLeft, Award, Users, CheckCircle, AlertTriangle } from 'lucide-reac
 import { useWeb3 } from '../contexts/Web3Context';
 import useElections from '../hooks/useElections';
 import DashboardLayout from '../layouts/DashboardLayout';
+import useDirectContract from '../hooks/useDirectContract';
+import DebugPanel from '../components/debug/DebugPanel';
 
 const ResultsPage = () => {
   const { electionId } = useParams();
@@ -84,6 +86,43 @@ const ResultsPage = () => {
     if (totalVotes === 0) return 0;
     return ((voteCount / totalVotes) * 100).toFixed(1);
   };
+
+  const {
+    getAllCandidates: getDirectCandidates,
+    error: directContractError
+  } = useDirectContract(process.env.REACT_APP_CONTRACT_ADDRESS);
+
+  // Add this function inside your ResultsPage component
+  const forceRefreshCandidates = async () => {
+    if (!election || !electionId) return;
+    
+    try {
+      // Try to get candidates directly from contract
+      const directCandidates = await getDirectCandidates(parseInt(electionId));
+      
+      if (directCandidates && directCandidates.length > 0) {
+        console.log(`Found ${directCandidates.length} candidates directly from contract`);
+        
+        // Update the election object with these candidates
+        setElection(prev => ({
+          ...prev,
+          candidates: directCandidates
+        }));
+      } else {
+        console.warn('No candidates found through direct contract call');
+      }
+    } catch (err) {
+      console.error('Error in direct candidate fetch:', err);
+    }
+  };
+
+  // Add useEffect to check candidates when election is loaded
+  useEffect(() => {
+    if (election && (!election.candidates || election.candidates.length === 0) && election.candidateCount > 0) {
+      console.log('Election has candidates in contract but none loaded. Trying direct fetch...');
+      forceRefreshCandidates();
+    }
+  }, [election, electionId]);
   
   if (isLoading) {
     return (
@@ -315,6 +354,7 @@ const ResultsPage = () => {
           </div>
         )}
       </div>
+      {election && <DebugPanel election={election} refreshData={forceRefreshCandidates} />}
     </DashboardLayout>
   );
 };

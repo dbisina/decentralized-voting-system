@@ -18,6 +18,8 @@ import HelpPage from './pages/HelpPage';
 import VoterRegistrationPage from './pages/VotersRegisterationPage';
 import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
+import ContractTester from './pages/ContractTester.jsx';
+import CandidateDebugger from './pages/CandidateDebugger.jsx';
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -43,6 +45,8 @@ const App = () => {
             <Route path="/about" element={<AboutPage />} />
             <Route path="/faq" element={<FAQPage />} />
             <Route path="/register/:electionId/:registrationCode" element={<VoterRegistrationPage />} />
+            <Route path="/contract-test" element={<ContractTester />} />
+            <Route path="/candidate-debug" element={<CandidateDebugger />} />
             
             {/* Protected Routes */}
             <Route 

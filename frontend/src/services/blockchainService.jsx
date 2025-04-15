@@ -271,49 +271,152 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Get all candidates for an election
-   * @param {number} electionId - ID of the election
-   * @param {number} candidateCount - Total number of candidates
-   * @returns {Promise<Array>} Array of candidate details
-   */
-  async getElectionCandidates(electionId, candidateCount) {
-    try {
-      if (this.useMockMode) {
-        console.log(`Using mock blockchain data for getElectionCandidates(${electionId})`);
-        
-        const election = this.mockData.elections[electionId];
-        if (!election) {
-          throw new Error(`Election ${electionId} not found`);
-        }
-        
-        return Object.values(election.candidates);
+ /**
+ * Get all candidates for an election
+ * @param {number} electionId - ID of the election
+ * @param {number} candidateCount - Total number of candidates
+ * @returns {Promise<Array>} Array of candidate details
+ */
+async getElectionCandidates(electionId, candidateCount) {
+  try {
+    if (this.useMockMode) {
+      console.log(`Using mock blockchain data for getElectionCandidates(${electionId})`);
+      
+      const election = this.mockData.elections[electionId];
+      if (!election) {
+        throw new Error(`Election ${electionId} not found`);
       }
       
-      // Real blockchain implementation
-      const candidates = [];
-
-      for (let i = 1; i <= candidateCount; i++) {
-        try {
-          const result = await this.contract.getCandidate(electionId, i);
-          
-          candidates.push({
-            id: result.id.toNumber(),
-            name: result.name,
-            details: result.details, // IPFS hash
-            voteCount: result.voteCount.toNumber()
-          });
-        } catch (error) {
-          console.error(`Error fetching candidate ${i} for election ${electionId}:`, error);
-        }
-      }
-
-      return candidates;
-    } catch (error) {
-      console.error(`Error fetching candidates for election ${electionId}:`, error);
-      throw error;
+      return Object.values(election.candidates);
     }
+    
+    // Real blockchain implementation for your contract structure
+    const candidates = [];
+    console.log(`Fetching ${candidateCount} candidates for election ${electionId}`);
+
+    // For each candidate ID, get the candidate details directly using getCandidate
+    for (let i = 1; i <= candidateCount; i++) {
+      try {
+        console.log(`Fetching candidate ${i} for election ${electionId}`);
+        const result = await this.contract.getCandidate(electionId, i);
+        
+        candidates.push({
+          id: result.id.toNumber(),
+          name: result.name,
+          details: result.details, // IPFS hash or direct details
+          voteCount: result.voteCount.toNumber()
+        });
+        
+        console.log(`Successfully fetched candidate ${i}: ${result.name}`);
+      } catch (error) {
+        console.error(`Error fetching candidate ${i} for election ${electionId}:`, error);
+      }
+    }
+
+    console.log(`Retrieved ${candidates.length} candidates for election ${electionId}`);
+    return candidates;
+  } catch (error) {
+    console.error(`Error fetching candidates for election ${electionId}:`, error);
+    return []; // Return empty array instead of throwing
   }
+}
+
+/**
+ * Add a candidate to an election
+ * @param {number} electionId - ID of the election
+ * @param {string} name - Name of the candidate
+ * @param {string} details - IPFS hash of candidate details
+ * @returns {Promise<Object>} Transaction receipt
+ */
+async addCandidate(electionId, name, details) {
+  try {
+    if (this.useMockMode) {
+      console.log(`Using mock blockchain data for addCandidate(${electionId})`);
+      
+      const election = this.mockData.elections[electionId];
+      if (!election) {
+        throw new Error(`Election ${electionId} not found`);
+      }
+      
+      // Increment candidate count
+      election.candidateCount++;
+      const candidateId = election.candidateCount;
+      
+      // Add candidate
+      election.candidates[candidateId] = {
+        id: candidateId,
+        name,
+        details,
+        voteCount: 0
+      };
+      
+      // Save to localStorage
+      this._saveMockData();
+      
+      // Create receipt
+      const receipt = this._createMockReceipt();
+      
+      return {
+        transactionHash: receipt.transactionHash,
+        candidateId
+      };
+    }
+    
+    // Real blockchain implementation
+    if (!this.signer) {
+      throw new Error('Signer not available. Please connect your wallet.');
+    }
+
+    const contractWithSigner = this.contract.connect(this.signer);
+    
+    // Check if election has started before attempting to add candidate
+    const electionDetails = await contractWithSigner.getElectionDetails(electionId);
+    const now = Math.floor(Date.now() / 1000);
+    
+    if (now >= electionDetails.startTime.toNumber()) {
+      throw new Error('Cannot add candidate after election has started');
+    }
+    
+    console.log(`Adding candidate "${name}" to election ${electionId}...`);
+    const tx = await contractWithSigner.addCandidate(electionId, name, details);
+    console.log(`Transaction sent: ${tx.hash}`);
+    
+    // Wait for transaction to be mined
+    const receipt = await tx.wait();
+    console.log(`Transaction mined: ${receipt.transactionHash}`);
+    
+    // Try to extract candidate ID from the event or get updated candidate count
+    let candidateId;
+    
+    try {
+      // First try standard event format
+      const event = receipt.events?.find(evt => evt.event === 'CandidateAdded');
+      if (event && event.args) {
+        candidateId = event.args.candidateId.toNumber();
+        console.log(`Found candidate ID from event: ${candidateId}`);
+      } else {
+        // If event not found, get updated candidate count
+        console.log(`No event found. Getting updated election details...`);
+        const updatedDetails = await contractWithSigner.getElectionDetails(electionId);
+        candidateId = updatedDetails.candidateCount.toNumber();
+        console.log(`Using candidate count as ID: ${candidateId}`);
+      }
+    } catch (eventError) {
+      console.warn(`Error extracting candidate ID from events: ${eventError.message}`);
+      // Use a fallback approach - if we had X candidates before, new one is likely X+1
+      const updatedDetails = await contractWithSigner.getElectionDetails(electionId);
+      candidateId = updatedDetails.candidateCount.toNumber();
+    }
+    
+    return {
+      transactionHash: receipt.transactionHash,
+      candidateId
+    };
+  } catch (error) {
+    console.error(`Error adding candidate to election ${electionId}:`, error);
+    throw error;
+  }
+}
 
   /**
    * Check if a user has voted in an election
@@ -418,72 +521,6 @@ class BlockchainService {
     }
   }
 
-  /**
-   * Add a candidate to an election
-   * @param {number} electionId - ID of the election
-   * @param {string} name - Name of the candidate
-   * @param {string} details - IPFS hash of candidate details
-   * @returns {Promise<Object>} Transaction receipt
-   */
-  async addCandidate(electionId, name, details) {
-    try {
-      if (this.useMockMode) {
-        console.log(`Using mock blockchain data for addCandidate(${electionId})`);
-        
-        const election = this.mockData.elections[electionId];
-        if (!election) {
-          throw new Error(`Election ${electionId} not found`);
-        }
-        
-        // Increment candidate count
-        election.candidateCount++;
-        const candidateId = election.candidateCount;
-        
-        // Add candidate
-        election.candidates[candidateId] = {
-          id: candidateId,
-          name,
-          details,
-          voteCount: 0
-        };
-        
-        // Save to localStorage
-        this._saveMockData();
-        
-        // Create receipt
-        const receipt = this._createMockReceipt();
-        
-        return {
-          transactionHash: receipt.transactionHash,
-          candidateId
-        };
-      }
-      
-      // Real blockchain implementation
-      if (!this.signer) {
-        throw new Error('Signer not available. Please connect your wallet.');
-      }
-
-      const contractWithSigner = this.contract.connect(this.signer);
-      
-      const tx = await contractWithSigner.addCandidate(electionId, name, details);
-      
-      // Wait for transaction to be mined
-      const receipt = await tx.wait();
-      
-      // Extract candidate ID from event logs
-      const event = receipt.events.find(event => event.event === 'CandidateAdded');
-      const candidateId = event.args.candidateId.toNumber();
-      
-      return {
-        transactionHash: receipt.transactionHash,
-        candidateId
-      };
-    } catch (error) {
-      console.error(`Error adding candidate to election ${electionId}:`, error);
-      throw error;
-    }
-  }
 
   /**
    * Cast a vote in an election

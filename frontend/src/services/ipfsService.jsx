@@ -225,64 +225,107 @@ class IPFSService {
     });
   }
 
-  /**
-   * Get content from IPFS or mock storage
-   * @param {string} cid - IPFS content identifier
-   * @returns {Promise<Object|string>} Retrieved content
-   */
-  async getFromIPFS(cid) {
-    try {
-      if (!cid) {
-        throw new Error('Invalid CID');
-      }
-      
-      // First check mock storage
-      if (this.mockStorage[cid]) {
-        const content = this.mockStorage[cid];
-        
-        // If it's a JSON string, parse it
-        if (typeof content === 'string') {
-          try {
-            return JSON.parse(content);
-          } catch (parseError) {
-            // Return as plain text if not valid JSON
-            return content;
-          }
-        }
-        
-        return content;
-      }
-      
-      // If not in mock storage and IPFS client is available, try IPFS
-      if (this.ipfs) {
-        try {
-          const stream = this.ipfs.cat(cid);
-          let data = '';
-          
-          for await (const chunk of stream) {
-            data += new TextDecoder().decode(chunk);
-          }
-          
-          // Try to parse as JSON if possible
-          try {
-            return JSON.parse(data);
-          } catch (parseError) {
-            // Return as plain text if not valid JSON
-            return data;
-          }
-        } catch (ipfsError) {
-          console.warn('Error fetching from IPFS node, falling back to gateway:', ipfsError);
-          // Fall back to gateway if direct fetch fails
-        }
-      }
-      
-      // Fallback to HTTP gateway
-      return this._fetchFromGateway(cid);
-    } catch (error) {
-      console.error('Error getting content from IPFS/mock storage:', error);
-      throw error;
-    }
+  // Replace this method in your IPFSService.jsx
+
+/**
+ * Get content from IPFS or mock storage with better error handling
+ * @param {string} cid - IPFS content identifier
+ * @returns {Promise<Object|string>} Retrieved content
+ */
+async getFromIPFS(cid) {
+  // If CID is not valid, return empty object instead of failing
+  if (!cid || typeof cid !== 'string' || cid.trim() === '') {
+    console.warn('Invalid or empty CID provided:', cid);
+    return {}; // Return empty object as fallback
   }
+  
+  try {
+    console.log(`Attempting to get content from IPFS: ${cid}`);
+    
+    // Check mock storage first
+    if (this.mockStorage[cid]) {
+      console.log(`Found content in mock storage for CID: ${cid}`);
+      const content = this.mockStorage[cid];
+      
+      // If it's a JSON string, parse it
+      if (typeof content === 'string') {
+        try {
+          return JSON.parse(content);
+        } catch (parseError) {
+          // Return as plain text if not valid JSON
+          return content;
+        }
+      }
+      
+      return content;
+    }
+    
+    // If not in mock storage and IPFS client is available, try IPFS
+    if (this.ipfs) {
+      try {
+        console.log(`Attempting to fetch from IPFS node: ${cid}`);
+        const stream = this.ipfs.cat(cid);
+        let data = '';
+        
+        for await (const chunk of stream) {
+          data += new TextDecoder().decode(chunk);
+        }
+        
+        console.log(`Successfully retrieved data from IPFS: ${cid}`);
+        
+        // Try to parse as JSON if possible
+        try {
+          return JSON.parse(data);
+        } catch (parseError) {
+          // Return as plain text if not valid JSON
+          return data;
+        }
+      } catch (ipfsError) {
+        console.warn(`Error fetching from IPFS node: ${ipfsError.message}`);
+        // Continue to gateway fallback
+      }
+    }
+    
+    // Try HTTP gateway
+    try {
+      console.log(`Attempting to fetch from gateway: ${this.gatewayURL}${cid}`);
+      const response = await fetch(`${this.gatewayURL}${cid}`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      console.log(`Successfully retrieved data from gateway: ${cid}`);
+      const contentType = response.headers.get('content-type');
+      
+      if (contentType && contentType.includes('application/json')) {
+        return await response.json();
+      } else {
+        return await response.text();
+      }
+    } catch (gatewayError) {
+      console.warn(`Error fetching from gateway: ${gatewayError.message}`);
+      // Instead of failing, return a fallback object
+      return {
+        name: "Candidate", // Provide a default name
+        bio: "Candidate information unavailable", // Provide a default bio
+        platform: "",
+        _ipfsError: true,
+        _requestedCid: cid
+      };
+    }
+  } catch (error) {
+    console.error(`Error in getFromIPFS: ${error.message}`);
+    // Return a fallback object instead of throwing
+    return {
+      name: "Candidate", 
+      bio: "Candidate information unavailable", 
+      platform: "",
+      _ipfsError: true,
+      _errorMessage: error.message
+    };
+  }
+}
 
   /**
    * Fetch content from IPFS gateway

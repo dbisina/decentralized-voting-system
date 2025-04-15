@@ -101,6 +101,18 @@ const CreateElectionPage = () => {
       return false;
     }
     
+    // IMPORTANT: Make sure start time is at least 1 hour in the future
+    const now = new Date();
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+    
+    if (startDateTime <= oneHourFromNow) {
+      setStatusMessage({ 
+        type: 'error', 
+        message: 'Start date must be at least 1 hour in the future to allow time for adding candidates' 
+      });
+      return false;
+    }
+    
     // Check if at least one candidate has a name
     const hasNamedCandidate = candidates.some(candidate => candidate.name.trim() !== '');
     if (!hasNamedCandidate) {
