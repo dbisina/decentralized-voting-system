@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Calendar, Clock, Info, Upload, PlusCircle, MinusCircle, CheckCircle, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, Calendar, Clock, Info, AlertTriangle, CheckCircle } from 'lucide-react';
 import { useWeb3 } from '../contexts/Web3Context';
 import useElections from '../hooks/useElections';
 import IPFSService from '../services/ipfsService';
 import DashboardLayout from '../layouts/DashboardLayout';
+import Button from '../components/common/Button';
+import Card from '../components/common/Card';
 
 const CreateElectionPage = () => {
   const navigate = useNavigate();
@@ -24,15 +26,10 @@ const CreateElectionPage = () => {
     additionalInfo: ''
   });
   
-  // Candidates state
-  const [candidates, setCandidates] = useState([
-    { name: '', platform: '', bio: '' }
-  ]);
-  
   // UI state
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
-  const [activeStep, setActiveStep] = useState(1); // 1: Basic Details, 2: Candidates, 3: Review
+  const [activeStep, setActiveStep] = useState(1); // 1: Basic Details, 2: Review
   
   // Handle form input changes
   const handleInputChange = (e) => {
@@ -43,32 +40,9 @@ const CreateElectionPage = () => {
     });
   };
   
-  // Handle candidate input changes
-  const handleCandidateChange = (index, field, value) => {
-    const updatedCandidates = [...candidates];
-    updatedCandidates[index] = {
-      ...updatedCandidates[index],
-      [field]: value
-    };
-    setCandidates(updatedCandidates);
-  };
-  
-  // Add a new candidate field
-  const addCandidate = () => {
-    setCandidates([...candidates, { name: '', platform: '', bio: '' }]);
-  };
-  
-  // Remove a candidate field
-  const removeCandidate = (index) => {
-    if (candidates.length > 1) {
-      const updatedCandidates = candidates.filter((_, i) => i !== index);
-      setCandidates(updatedCandidates);
-    }
-  };
-  
   // Navigate between steps
   const nextStep = () => {
-    if (activeStep < 3) {
+    if (activeStep < 2) {
       setActiveStep(activeStep + 1);
     }
   };
@@ -101,24 +75,17 @@ const CreateElectionPage = () => {
       return false;
     }
     
-    // IMPORTANT: Make sure start time is at least 1 hour in the future
+    // IMPORTANT: Make sure start time is at least 24 hours in the future
     const now = new Date();
-    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
+    const oneDayFromNow = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     
-    if (startDateTime <= oneHourFromNow) {
+   /* if (startDateTime <= oneDayFromNow) {
       setStatusMessage({ 
         type: 'error', 
-        message: 'Start date must be at least 1 hour in the future to allow time for adding candidates' 
+        message: 'Start date must be at least 24 hours in the future to allow time for adding candidates' 
       });
       return false;
-    }
-    
-    // Check if at least one candidate has a name
-    const hasNamedCandidate = candidates.some(candidate => candidate.name.trim() !== '');
-    if (!hasNamedCandidate) {
-      setStatusMessage({ type: 'error', message: 'At least one candidate with a name is required' });
-      return false;
-    }
+    }*/
     
     // Clear any previous error messages
     setStatusMessage(null);
@@ -159,41 +126,18 @@ const CreateElectionPage = () => {
         endDate: endDateTime
       });
       
-      // Process candidates (if election was created successfully)
+      // Success message
       if (result && result.electionId) {
-        setStatusMessage({ 
-          type: 'processing', 
-          message: `Election created successfully! Adding candidates...` 
-        });
-        
-        // Store candidate information on IPFS and add to blockchain
-        const validCandidates = candidates.filter(c => c.name.trim() !== '');
-        
-        for (let i = 0; i < validCandidates.length; i++) {
-          const candidate = validCandidates[i];
-          
-          // Store candidate details on IPFS
-          const candidateIpfsCid = await ipfsService.storeCandidateDetails({
-            name: candidate.name,
-            bio: candidate.bio,
-            platform: candidate.platform
-          });
-          
-          // Add candidate to blockchain
-          await addCandidate(result.electionId, candidate.name, candidateIpfsCid);
-        }
-        
-        // Success message
         setStatusMessage({ 
           type: 'success', 
           message: 'Election created successfully!',
           details: `Transaction Hash: ${result.transactionHash}`
         });
         
-        // Redirect after a brief delay
+        // Redirect to candidate management page
         setTimeout(() => {
-          navigate(`/election/${result.electionId}`);
-        }, 3000);
+          navigate(`/manage-candidates/${result.electionId}`);
+        }, 2000);
       }
     } catch (err) {
       console.error("Error creating election:", err);
@@ -222,7 +166,7 @@ const CreateElectionPage = () => {
         </button>
         
         <div className="text-sm text-gray-500">
-          {`Step ${activeStep} of 3`}
+          {`Step ${activeStep} of 2`}
         </div>
       </div>
       
@@ -271,23 +215,12 @@ const CreateElectionPage = () => {
             }`}>
               2
             </div>
-            <div className={`flex-1 h-1 mx-2 ${
-              activeStep >= 3 ? 'bg-indigo-600' : 'bg-gray-200'
-            }`}></div>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-              activeStep >= 3 ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
-            }`}>
-              3
-            </div>
           </div>
           <div className="flex justify-between text-sm mt-2">
             <div className={activeStep === 1 ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
               Basic Details
             </div>
             <div className={activeStep === 2 ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
-              Add Candidates
-            </div>
-            <div className={activeStep === 3 ? 'text-indigo-600 font-medium' : 'text-gray-500'}>
               Review & Create
             </div>
           </div>
@@ -434,96 +367,14 @@ const CreateElectionPage = () => {
                 <Info size={18} className="mr-2 mt-0.5 flex-shrink-0" />
                 <div>
                   <strong>Important:</strong> Once created, the basic details of an election cannot be modified.
-                  However, candidates can be added until the election starts.
+                  After creating the election, you'll be able to add candidates until the election starts.
                 </div>
               </div>
             </div>
           )}
           
-          {/* Step 2: Add Candidates */}
+          {/* Step 2: Review */}
           {activeStep === 2 && (
-            <div className="p-6">
-              <div className="mb-4">
-                <h2 className="text-lg font-bold text-gray-800">Add Election Candidates</h2>
-                <p className="text-gray-600 text-sm">
-                  Add at least one candidate to appear on the ballot.
-                </p>
-              </div>
-              
-              {candidates.map((candidate, index) => (
-                <div 
-                  key={index} 
-                  className="mb-6 p-4 border border-gray-200 rounded-lg"
-                >
-                  <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-medium text-gray-700">Candidate {index + 1}</h3>
-                    
-                    {candidates.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => removeCandidate(index)}
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <MinusCircle size={18} />
-                      </button>
-                    )}
-                  </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-gray-700 text-sm font-medium mb-1">
-                      Candidate Name *
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Enter candidate name"
-                      value={candidate.name}
-                      onChange={(e) => handleCandidateChange(index, 'name', e.target.value)}
-                      required={index === 0}
-                    />
-                  </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-gray-700 text-sm font-medium mb-1">
-                      Platform/Slogan
-                    </label>
-                    <input
-                      type="text"
-                      className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Enter candidate platform or slogan"
-                      value={candidate.platform}
-                      onChange={(e) => handleCandidateChange(index, 'platform', e.target.value)}
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="block text-gray-700 text-sm font-medium mb-1">
-                      Bio/Description
-                    </label>
-                    <textarea
-                      rows="2"
-                      className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      placeholder="Brief description about the candidate"
-                      value={candidate.bio}
-                      onChange={(e) => handleCandidateChange(index, 'bio', e.target.value)}
-                    />
-                  </div>
-                </div>
-              ))}
-              
-              <button
-                type="button"
-                onClick={addCandidate}
-                className="w-full py-2 border-2 border-dashed border-gray-300 rounded-lg text-gray-600 hover:border-indigo-500 hover:text-indigo-600 flex items-center justify-center"
-              >
-                <PlusCircle size={18} className="mr-2" />
-                <span>Add Another Candidate</span>
-              </button>
-            </div>
-          )}
-          
-          {/* Step 3: Review */}
-          {activeStep === 3 && (
             <div className="p-6">
               <div className="mb-6">
                 <h2 className="text-lg font-bold text-gray-800">Review Election Details</h2>
@@ -564,28 +415,6 @@ const CreateElectionPage = () => {
                     )}
                   </div>
                 </div>
-                
-                <div className="p-4">
-                  <h3 className="font-medium text-gray-800 mb-3">Candidates ({candidates.filter(c => c.name.trim() !== '').length})</h3>
-                  
-                  {candidates.filter(c => c.name.trim() !== '').map((candidate, index) => (
-                    <div key={index} className="mb-4 last:mb-0">
-                      <div className="font-medium">{candidate.name}</div>
-                      {candidate.platform && (
-                        <div className="text-sm text-gray-600">{candidate.platform}</div>
-                      )}
-                      {candidate.bio && (
-                        <div className="text-sm text-gray-600 mt-1">{candidate.bio}</div>
-                      )}
-                    </div>
-                  ))}
-                  
-                  {candidates.filter(c => c.name.trim() !== '').length === 0 && (
-                    <div className="text-yellow-600 text-sm">
-                      No valid candidates added. Please go back and add at least one candidate.
-                    </div>
-                  )}
-                </div>
               </div>
               
               <div className="bg-indigo-50 border border-indigo-200 rounded-md p-4 text-sm text-indigo-800 mb-6">
@@ -596,6 +425,10 @@ const CreateElectionPage = () => {
                     Please make sure your wallet is connected to the correct network and has sufficient funds.
                     <div className="mt-2">
                       <strong>Connected Address:</strong> {account || 'Not connected'}
+                    </div>
+                    <div className="mt-2">
+                      <strong>Next Steps:</strong> After creating the election, you'll be redirected to a page
+                      where you can add candidates before the election starts.
                     </div>
                   </div>
                 </div>
@@ -618,7 +451,7 @@ const CreateElectionPage = () => {
               <div></div> // Empty div for flex spacing
             )}
             
-            {activeStep < 3 ? (
+            {activeStep < 2 ? (
               <button
                 type="button"
                 onClick={nextStep}

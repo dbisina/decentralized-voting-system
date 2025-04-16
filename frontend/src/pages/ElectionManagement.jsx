@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Users, Calendar, Clock, ChevronDown, Info, ExternalLink, AlertCircle } from 'lucide-react';
+import { Plus, Edit, Trash2, Users, Calendar, Clock, ChevronDown, Info, ExternalLink, AlertCircle, UserPlus } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
@@ -250,6 +250,11 @@ const ElectionManagement = () => {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <StatusBadge status={election.status} />
+                      {election.status === 'upcoming' && (!election.candidates || election.candidates.length === 0) && (
+                          <div className="ml-2 px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-medium">
+                            No Candidates
+                          </div>
+                        )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="flex items-center text-sm text-gray-500">
@@ -309,39 +314,46 @@ const ElectionManagement = () => {
                         )}
                         
                         {election.status === 'upcoming' && (
-                          <>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleEditElection(election.id)}
-                              className="px-2 py-1"
-                            >
-                              <Edit size={16} />
-                            </Button>
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              onClick={() => handleDeleteElection(election.id)}
-                              className="px-2 py-1"
-                            >
-                              <Trash2 size={16} />
-                            </Button>
-                            
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => {
-                                // Log to see what's being passed
-                                console.log("Election ID:", election.id);
-                                navigate(`/manage-registrations/${election.id.toString()}`);
-                              }}
-                              className="ml-2"
-                            >
-                              <Users size={16} className="mr-1" />
-                              Manage Voters
-                            </Button>
-                          </>
-                        )}
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleEditElection(election.id)}
+                            className="px-2 py-1"
+                          >
+                            <Edit size={16} />
+                          </Button>
+                          <Button
+                            variant="danger"
+                            size="sm"
+                            onClick={() => handleDeleteElection(election.id)}
+                            className="px-2 py-1"
+                          >
+                            <Trash2 size={16} />
+                          </Button>
+                          
+                          {/* Add this new button for managing candidates */}
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => navigate(`/manage-candidates/${election.id.toString()}`)}
+                            className="px-2 py-1 ml-1"
+                          >
+                            <UserPlus size={16} />
+                          </Button>
+                                                  
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={() => navigate(`/manage-registrations/${election.id.toString()}`)}
+                            className="ml-2"
+                          >
+                            <Users size={16} className="mr-1" />
+                            Manage Voters
+                          </Button>
+                        </>
+                      )}
+                                        
                         
                         <Button
                           variant="secondary"

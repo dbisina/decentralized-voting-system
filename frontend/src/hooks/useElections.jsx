@@ -302,58 +302,65 @@ const enhanceElectionsWithIPFSData = async (elections) => {
   
   // Update the addCandidate function in useElections.jsx to handle timing requirements:
 
-/**
- * Add a candidate to an election
- * @param {number} electionId - ID of the election
- * @param {Object} candidateData - Candidate data
- * @returns {Promise<Object>} Transaction result
- */
-const addCandidate = async (electionId, candidateData) => {
-  if (!contract || !signer || !account) {
-    throw new Error('Wallet not connected. Please connect your wallet to add a candidate.');
-  }
-  
-  try {
-    setIsLoading(true);
-    setError(null);
-    
-    // Check if election has already started
-    const blockchainService = new BlockchainService(contract, signer);
-    const election = await blockchainService.getElectionDetails(electionId);
-    const now = Math.floor(Date.now() / 1000);
-    
-    if (now >= election.startTime) {
-      throw new Error('Cannot add candidate after election has started. Please create a new election with a future start time.');
+  /**
+   * Add a candidate to an election
+   * @param {number} electionId - ID of the election
+   * @param {Object} candidateData - Candidate data
+   * @returns {Promise<Object>} Transaction result
+   */
+  const addCandidate = async (electionId, candidateData) => {
+    if (!contract || !signer || !account) {
+      throw new Error('Wallet not connected. Please connect your wallet to add a candidate.');
     }
     
-    // Store candidate details on IPFS
-    const ipfsCid = await ipfsService.storeCandidateDetails({
-      name: candidateData.name,
-      bio: candidateData.bio,
-      platform: candidateData.platform,
-      photoUrl: candidateData.photoUrl,
-      additionalInfo: candidateData.additionalInfo
-    });
-    
-    // Add candidate to blockchain with IPFS reference
-    const result = await blockchainService.addCandidate(
-      electionId,
-      candidateData.name,
-      ipfsCid
-    );
-    
-    // Refresh elections list
-    await fetchElections();
-    
-    return result;
-  } catch (err) {
-    console.error('Error adding candidate:', err);
-    setError(err.message || 'Failed to add candidate. Please try again.');
-    throw err;
-  } finally {
-    setIsLoading(false);
-  }
-};
+    try {
+      setIsLoading(true);
+      setError(null);
+      
+      // Check if election can accept candidates
+      const blockchainService = new BlockchainService(contract, signer);
+      const election = await blockchainService.getElectionDetails(electionId);
+      const now = Math.floor(Date.now() / 1000);
+      
+      if (now >= election.startTime) {
+        throw new Error('Cannot add candidate after election has started. Please create a new election with a future start time.');
+      }
+      
+      // Handle different formats of candidateData for better flexibility
+      let candidateName, candidateDetails;
+      
+      if (typeof candidateData === 'object') {
+        // If candidateData is an object, extract name and details
+        candidateName = candidateData.name;
+        candidateDetails = candidateData.details || '';
+      } else {
+        // For backward compatibility, assume candidateData is the name
+        candidateName = candidateData;
+        candidateDetails = '';
+      }
+      
+      // Add candidate to blockchain with IPFS reference
+      console.log(`Adding candidate "${candidateName}" to election ${electionId}...`);
+      const result = await blockchainService.addCandidate(
+        electionId,
+        candidateName,
+        candidateDetails
+      );
+      
+      // Refresh elections list
+      await fetchElections();
+      
+      return result;
+    } catch (err) {
+      console.error('Error adding candidate:', err);
+      setError(err.message || 'Failed to add candidate. Please try again.');
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+
   /**
    * Cast a vote in an election
    * @param {number} electionId - ID of the election

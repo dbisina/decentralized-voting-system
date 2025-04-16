@@ -10,14 +10,14 @@ import VoteCastingPage from './pages/VoteCastingPage';
 import ElectionManagement from './pages/ElectionManagement';
 import ResultsPage from './pages/ResultsPage';
 import CreateElectionPage from './pages/CreateElectionPage';
+import CandidateManagementPage from './pages/CandidateManagementPage'; // Import the new page
 import AboutPage from './pages/AboutPage';
 import FAQPage from './pages/FAQPage';
 import ProfilePage from './pages/ProfilePage';
-//import SettingsPage from './pages/SettingsPage';
+import SettingsPage from './pages/SettingsPage';
 import HelpPage from './pages/HelpPage';
 import VoterRegistrationPage from './pages/VotersRegisterationPage';
 import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage.jsx';
-import SettingsPage from './pages/SettingsPage.jsx';
 import ContractTester from './pages/ContractTester.jsx';
 import CandidateDebugger from './pages/CandidateDebugger.jsx';
 
@@ -90,6 +90,16 @@ const App = () => {
               element={
                 <ProtectedRoute>
                   <CreateElectionPage />
+                </ProtectedRoute>
+              } 
+            />
+            
+            {/* New route for candidate management */}
+            <Route 
+              path="/manage-candidates/:electionId" 
+              element={
+                <ProtectedRoute>
+                  <CandidateManagementPage />
                 </ProtectedRoute>
               } 
             />
