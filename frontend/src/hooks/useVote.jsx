@@ -1,10 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useWeb3 } from '../contexts/Web3Context';
 import useBlockchain from './useBlockchain';
 import useElections from './useElections';
 
 /**
- * Custom hook for voting functionality
+ * Custom hook for voting functionality with personal vote tracking
  */
 const useVote = (electionId) => {
   const { account } = useWeb3();
@@ -17,6 +17,23 @@ const useVote = (electionId) => {
   const [transaction, setTransaction] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [error, setError] = useState(null);
+  const [hasVoted, setHasVoted] = useState(false);
+  
+  // Check if the user has already voted on component mount
+  useEffect(() => {
+    const checkInitialVoteStatus = async () => {
+      if (account && electionId && blockchainService) {
+        try {
+          const voted = await blockchainService.hasVoted(electionId, account);
+          setHasVoted(voted);
+        } catch (err) {
+          console.warn('Error checking initial vote status:', err);
+        }
+      }
+    };
+    
+    checkInitialVoteStatus();
+  }, [account, electionId, blockchainService]);
   
   /**
    * Select a candidate for voting
@@ -76,8 +93,9 @@ const useVote = (electionId) => {
         return { hasVoted: false };
       }
       
-      const hasVoted = await blockchainService.hasVoted(electionId, account);
-      return { hasVoted };
+      const hasVotedNow = await blockchainService.hasVoted(electionId, account);
+      setHasVoted(hasVotedNow); // Update state with result
+      return { hasVoted: hasVotedNow };
     } catch (err) {
       console.error('Error checking voting status:', err);
       return { hasVoted: false, error: err.message };
@@ -98,11 +116,10 @@ const useVote = (electionId) => {
       setError(null);
       
       // Check if user has already voted
-      const { hasVoted } = await checkVotingStatus();
+      const { hasVoted: alreadyVoted } = await checkVotingStatus();
       
-      if (hasVoted) {
-        setError('You have already voted in this election');
-        return false;
+      if (alreadyVoted) {
+        throw new Error('You have already voted in this election.');
       }
       
       // Cast vote
@@ -118,8 +135,14 @@ const useVote = (electionId) => {
       const txReceipt = await getTransactionReceipt(tx.transactionHash);
       setReceipt(txReceipt);
       
+      // Track this vote in local storage for personal stats
+      trackUserVote(electionId, selectedCandidate);
+      
       // Refresh elections data
       await refreshElections();
+      
+      // Update voted state
+      setHasVoted(true);
       
       // Move to success step
       setVotingStep('success');
@@ -141,6 +164,34 @@ const useVote = (electionId) => {
     refreshElections,
     votingStep
   ]);
+  
+  /**
+   * Track user's vote in local storage for statistics
+   */
+  const trackUserVote = useCallback((electionId, candidateId) => {
+    try {
+      if (!account || !electionId) return;
+      
+      // Get existing vote records
+      const userVotes = JSON.parse(localStorage.getItem('user_votes') || '{}');
+      
+      // Update with this vote
+      if (!userVotes[account]) {
+        userVotes[account] = {};
+      }
+      
+      userVotes[account][electionId] = {
+        candidateId,
+        timestamp: new Date().toISOString()
+      };
+      
+      // Save back to localStorage
+      localStorage.setItem('user_votes', JSON.stringify(userVotes));
+    } catch (err) {
+      console.warn('Error tracking user vote:', err);
+      // Non-critical function, so don't throw
+    }
+  }, [account]);
   
   /**
    * Get the explorer link for the transaction
@@ -168,6 +219,7 @@ const useVote = (electionId) => {
     transaction,
     receipt,
     error,
+    hasVoted,
     selectCandidate,
     nextStep,
     prevStep,

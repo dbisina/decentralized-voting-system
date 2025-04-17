@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, AlertCircle, Info } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle, Info, Users } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import CandidateCard from '../components/voting/CandidateCard';
 import VoteConfirmation from '../components/voting/VoteConfirmation';
@@ -9,6 +9,7 @@ import Card from '../components/common/Card';
 import StatusBadge from '../components/common/StatusBadge';
 import useElections from '../hooks/useElections';
 import useVote from '../hooks/useVote';
+import useVoterRegistration from '../hooks/useVoterRegistration';
 import { timeRemaining, formatDate } from '../utils/dateUtils';
 import { useWeb3 } from '../contexts/Web3Context';
 import { Check } from 'lucide-react';
@@ -18,6 +19,8 @@ const VoteCastingPage = () => {
   const navigate = useNavigate();
   const { account } = useWeb3();
   const { allElections, refreshElections, isLoading: electionsLoading } = useElections();
+  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
+  
   const [election, setElection] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [hasVoted, setHasVoted] = useState(false);
@@ -50,6 +53,14 @@ const VoteCastingPage = () => {
           if (foundElection) {
             setElection(foundElection);
             
+            // First check if the user is registered for this election
+            const isRegistered = isRegisteredForElection(electionId);
+            
+            if (!isRegistered) {
+              setErrorMessage('You are not registered for this election. Please contact the election administrator.');
+              return;
+            }
+            
             // Check if user has voted
             const { hasVoted: userHasVoted, error: votingError } = await checkVotingStatus();
             setHasVoted(userHasVoted);
@@ -69,8 +80,10 @@ const VoteCastingPage = () => {
       }
     };
     
-    loadElection();
-  }, [electionId, allElections, checkVotingStatus]);
+    if (!registrationLoading) {
+      loadElection();
+    }
+  }, [electionId, allElections, checkVotingStatus, isRegisteredForElection, registrationLoading]);
   
   // Handle vote submission
   const handleConfirmVote = async () => {
@@ -99,12 +112,36 @@ const VoteCastingPage = () => {
   };
   
   // Loading state
-  if (isLoading || electionsLoading) {
+  if (isLoading || electionsLoading || registrationLoading) {
     return (
       <DashboardLayout>
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
         </div>
+      </DashboardLayout>
+    );
+  }
+  
+  // Not registered state
+  if (!isRegisteredForElection(electionId)) {
+    return (
+      <DashboardLayout>
+        <Card className="bg-red-50 border-red-200">
+          <div className="flex items-start">
+            <AlertCircle className="mr-3 mt-0.5 text-red-600" size={20} />
+            <div>
+              <h3 className="font-bold text-red-800">Access Denied</h3>
+              <p className="text-red-700">You are not registered for this election. Please contact the election administrator.</p>
+            </div>
+          </div>
+          <Button 
+            variant="primary"
+            className="mt-6"
+            onClick={handleReturnToDashboard}
+          >
+            Return to Dashboard
+          </Button>
+        </Card>
       </DashboardLayout>
     );
   }
@@ -211,6 +248,19 @@ const VoteCastingPage = () => {
             >
               {election.status === 'upcoming' ? 'Return to Dashboard' : 'View Election Results'}
             </Button>
+          </div>
+        </Card>
+        
+        {/* Registration confirmation section */}
+        <Card className="mt-6 bg-blue-50 border-blue-200">
+          <div className="flex items-start">
+            <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+            <div>
+              <h3 className="font-bold text-gray-800 mb-2">Registration Confirmed</h3>
+              <p className="text-gray-700">
+                You are successfully registered for this election. You will be able to vote once the election begins.
+              </p>
+            </div>
           </div>
         </Card>
       </DashboardLayout>
@@ -331,6 +381,19 @@ const VoteCastingPage = () => {
           >
             Continue to Confirmation
           </Button>
+        </div>
+      </Card>
+      
+      {/* Registration confirmation section */}
+      <Card className="mt-6 bg-blue-50 border-blue-200">
+        <div className="flex items-start">
+          <Users size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+          <div>
+            <h3 className="font-bold text-gray-800 mb-2">Registration Confirmed</h3>
+            <p className="text-gray-700">
+              You are registered for this election and eligible to vote.
+            </p>
+          </div>
         </div>
       </Card>
     </DashboardLayout>

@@ -587,10 +587,22 @@ async addCandidate(electionId, name, details) {
       if (!this.signer) {
         throw new Error('Signer not available. Please connect your wallet.');
       }
-
+  
+      // Convert parameters to BigNumber to ensure proper formatting
+      const electionIdBN = ethers.BigNumber.from(String(electionId));
+      const candidateIdBN = ethers.BigNumber.from(String(candidateId));
+      
+      console.log("Converted parameters:", {
+        electionIdBN: electionIdBN.toString(),
+        candidateIdBN: candidateIdBN.toString()
+      });
+  
       const contractWithSigner = this.contract.connect(this.signer);
       
-      const tx = await contractWithSigner.vote(electionId, candidateId);
+      // Use explicit gas settings
+      const tx = await contractWithSigner.vote(electionIdBN, candidateIdBN, {
+        gasLimit: 500000  // Set a high gas limit
+      });
       
       // Wait for transaction to be mined
       const receipt = await tx.wait();
@@ -656,25 +668,85 @@ async addCandidate(electionId, name, details) {
       if (!this.signer) {
         throw new Error('Signer not available. Please connect your wallet.');
       }
-
+  
+      // Convert electionId to BigNumber
+      const electionIdBN = ethers.BigNumber.from(String(electionId));
+      console.log(`Attempting to finalize election ${electionIdBN.toString()}`);
+      
+      // Get election details first to check status
+      try {
+        const election = await this.contract.getElectionDetails(electionIdBN);
+        console.log("Election details:", {
+          id: election.id.toNumber(),
+          startTime: new Date(election.startTime.toNumber() * 1000),
+          endTime: new Date(election.endTime.toNumber() * 1000),
+          finalized: election.finalized,
+          totalVotes: election.totalVotes.toNumber()
+        });
+        
+        const now = Math.floor(Date.now() / 1000);
+        if (now <= election.endTime.toNumber()) {
+          throw new Error("Election has not ended yet. Please wait until the end time.");
+        }
+        
+        if (election.finalized) {
+          throw new Error("Election is already finalized.");
+        }
+        
+        if (election.totalVotes.toNumber() === 0) {
+          throw new Error("No votes have been cast in this election. At least one vote is required to finalize.");
+        }
+      } catch (checkError) {
+        console.warn("Error checking election status:", checkError);
+        // Continue anyway - the contract will validate
+      }
+  
       const contractWithSigner = this.contract.connect(this.signer);
       
-      const tx = await contractWithSigner.finalizeElection(electionId);
+      // Add explicit gas settings
+      const options = {
+        gasLimit: 500000
+      };
+      
+      console.log("Sending finalize transaction with options:", options);
+      const tx = await contractWithSigner.finalizeElection(electionIdBN, options);
       
       // Wait for transaction to be mined
       const receipt = await tx.wait();
       
-      // Extract winning candidate ID from event logs
-      const event = receipt.events.find(event => event.event === 'ElectionFinalized');
-      const winningCandidateId = event.args.winningCandidateId.toNumber();
+      // Try to extract winning candidate ID from event logs
+      let winningCandidateId = null;
+      try {
+        const event = receipt.events.find(event => event.event === 'ElectionFinalized');
+        if (event && event.args) {
+          winningCandidateId = event.args.winningCandidateId.toNumber();
+        }
+      } catch (eventError) {
+        console.warn("Could not extract winning candidate ID from events:", eventError);
+      }
       
       return {
         transactionHash: receipt.transactionHash,
         winningCandidateId
       };
-    } catch (error) {
-      console.error(`Error finalizing election ${electionId}:`, error);
-      throw error;
+    } catch (err) {
+      console.error(`Error finalizing election ${electionId}:`, err);
+      
+      // Better error messaging
+      let errorMessage = err.message || "Unknown error";
+      
+      // Check for common errors
+      if (errorMessage.includes("No votes cast")) {
+        throw new Error("Cannot finalize an election with no votes. At least one vote must be cast.");
+      } else if (errorMessage.includes("has not ended")) {
+        throw new Error("The election period has not ended yet. Please wait until the end time.");
+      } else if (errorMessage.includes("already finalized")) {
+        throw new Error("This election has already been finalized.");
+      } else if (errorMessage.includes("Only election admin")) {
+        throw new Error("Only the election admin can finalize this election.");
+      } else {
+        throw new Error(`Failed to finalize election: ${errorMessage}`);
+      }
     }
   }
 

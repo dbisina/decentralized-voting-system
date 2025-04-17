@@ -7,11 +7,11 @@ const CONTRACT_ADDRESSES = {
   1: '', // Ethereum Mainnet (not deployed)
   5: '0x3B9f743B648aF8a8e31f542935D5a56d5E4d5E4', // Goerli Testnet
   80001: '0x2C78f1b70Ccf63CDEe49F9233e9fAa99D43AA07e', // Mumbai Testnet
-  1337: '0x411d6b98a4f7bd164bd7f574d24b5f37a6824ae3' // Local development
+  1337: '0x01b6335276db93afad1b8bbeae1a661ac7f5512b' // Local development
 };
 
 // The default network ID for development
-const DEFAULT_NETWORK_ID = 80001; // Mumbai Testnet
+const DEFAULT_NETWORK_ID = 1337; 
 
 // Create a context
 const Web3Context = createContext();

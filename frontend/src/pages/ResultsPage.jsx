@@ -3,15 +3,19 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Award, Users, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useWeb3 } from '../contexts/Web3Context';
 import useElections from '../hooks/useElections';
+import useVoterRegistration from '../hooks/useVoterRegistration';
 import DashboardLayout from '../layouts/DashboardLayout';
 import useDirectContract from '../hooks/useDirectContract';
 import DebugPanel from '../components/debug/DebugPanel';
+import Button from '../components/common/Button';
+import Card from '../components/common/Card';
 
 const ResultsPage = () => {
   const { electionId } = useParams();
   const navigate = useNavigate();
   const { account } = useWeb3();
   const { allElections, refreshElections, finalizeElection, isLoading, error } = useElections();
+  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
   
   const [election, setElection] = useState(null);
   const [isOwner, setIsOwner] = useState(false);
@@ -116,6 +120,12 @@ const ResultsPage = () => {
     }
   };
 
+  // Check if user has access to this election (must be admin or registered voter)
+  const hasAccess = () => {
+    if (isOwner) return true; // Admin always has access
+    return isRegisteredForElection(electionId); // Regular users need to be registered
+  };
+
   // Add useEffect to check candidates when election is loaded
   useEffect(() => {
     if (election && (!election.candidates || election.candidates.length === 0) && election.candidateCount > 0) {
@@ -124,12 +134,36 @@ const ResultsPage = () => {
     }
   }, [election, electionId]);
   
-  if (isLoading) {
+  if (isLoading || registrationLoading) {
     return (
       <DashboardLayout>
         <div className="flex justify-center items-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
         </div>
+      </DashboardLayout>
+    );
+  }
+  
+  // Access denied check
+  if (!hasAccess()) {
+    return (
+      <DashboardLayout>
+        <Card className="bg-red-50 border-red-200">
+          <div className="flex items-start">
+            <AlertTriangle className="mr-3 mt-0.5 text-red-600" size={20} />
+            <div>
+              <h3 className="font-bold text-red-800">Access Denied</h3>
+              <p className="text-red-700">You are not registered for this election and cannot view its results.</p>
+            </div>
+          </div>
+          <Button 
+            variant="primary"
+            className="mt-6"
+            onClick={() => navigate('/dashboard')}
+          >
+            Return to Dashboard
+          </Button>
+        </Card>
       </DashboardLayout>
     );
   }
@@ -184,6 +218,21 @@ const ResultsPage = () => {
            election.status}
         </div>
       </div>
+      
+      {/* Registration status indicator for non-admin users */}
+      {!isOwner && (
+        <Card className="mb-6 bg-blue-50 border-blue-200">
+          <div className="flex items-start">
+            <CheckCircle size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+            <div>
+              <h3 className="font-bold text-gray-800">Registration Status</h3>
+              <p className="text-gray-700">
+                You are registered for this election and can view the results.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
       
       <div className="bg-white rounded-lg shadow-sm overflow-hidden mb-6">
         <div className="p-6 border-b border-gray-200">
@@ -354,7 +403,7 @@ const ResultsPage = () => {
           </div>
         )}
       </div>
-      {election && <DebugPanel election={election} refreshData={forceRefreshCandidates} />}
+      {isOwner && election && <DebugPanel election={election} refreshData={forceRefreshCandidates} />}
     </DashboardLayout>
   );
 };

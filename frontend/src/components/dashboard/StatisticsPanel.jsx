@@ -1,51 +1,99 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { BarChart3, Users, Check, Calendar } from 'lucide-react';
-import useElections  from '../../hooks/useElections';
+import useElections from '../../hooks/useElections';
+import { useVoterRegistration } from '../../contexts/VoterRegistrationContext';
+import { useWeb3 } from '../../contexts/Web3Context';
 import { formatPercentage } from '../../utils/formatters';
 
 /**
  * Dashboard statistics panel component
- * Shows summary statistics for elections and votes
+ * Shows personalized statistics for the current user's elections and votes
  */
 const StatisticsPanel = () => {
   const { 
-    activeElections, 
-    completedElections, 
-    upcomingElections, 
     allElections, 
-    isLoading 
+    isLoading: electionsLoading 
   } = useElections();
   
-  // Calculate total votes across all elections
-  const totalVotes = allElections.reduce((sum, election) => sum + (election.totalVotes || 0), 0);
+  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
+  const { account } = useWeb3();
   
-  // Calculate total voters count
-  const totalVoters = allElections.reduce((sum, election) => sum + (election.voterCount || 0), 0);
+  const [userStats, setUserStats] = useState({
+    activeElections: [],
+    completedElections: [],
+    upcomingElections: [],
+    userVoteCount: 0,
+    userCandidateCount: 0,
+    mostActiveElection: null
+  });
   
-  // Calculate overall participation rate
-  const participationRate = totalVoters > 0 ? (totalVotes / totalVoters) * 100 : 0;
-  
-  // Get total candidates count
-  const totalCandidates = allElections.reduce((sum, election) => {
-    return sum + (election.candidates ? election.candidates.length : 0);
-  }, 0);
-  
-  // Get most active election
-  const getMostActiveElection = () => {
-    if (activeElections.length === 0) return null;
+  // Calculate personalized statistics whenever elections data or registration status changes
+  useEffect(() => {
+    if (electionsLoading || registrationLoading || !account) return;
+
+    // Filter elections that the user is registered for or is the admin of
+    const userActiveElections = allElections.filter(election => 
+      (isRegisteredForElection(election.id) || 
+       (election.admin && election.admin.toLowerCase() === account.toLowerCase())) && 
+      election.status === 'active'
+    );
     
-    return activeElections.reduce((mostActive, current) => {
-      const currentParticipation = current.totalVotes / Math.max(1, current.voterCount);
-      const mostActiveParticipation = mostActive.totalVotes / Math.max(1, mostActive.voterCount);
-      
-      return currentParticipation > mostActiveParticipation ? current : mostActive;
-    }, activeElections[0]);
-  };
-  
-  const mostActiveElection = getMostActiveElection();
+    const userCompletedElections = allElections.filter(election => 
+      (isRegisteredForElection(election.id) || 
+       (election.admin && election.admin.toLowerCase() === account.toLowerCase())) && 
+      (election.status === 'completed' || election.status === 'ended')
+    );
+    
+    const userUpcomingElections = allElections.filter(election => 
+      (isRegisteredForElection(election.id) || 
+       (election.admin && election.admin.toLowerCase() === account.toLowerCase())) && 
+      election.status === 'upcoming'
+    );
+    
+    // Count user's personal votes
+    let userVoteCount = 0;
+    
+    userActiveElections.concat(userCompletedElections).forEach(election => {
+      if (election.hasVoted) {
+        userVoteCount++;
+      }
+    });
+    
+    // Count candidates in elections the user created
+    const userCreatedElections = allElections.filter(
+      election => election.admin && election.admin.toLowerCase() === account.toLowerCase()
+    );
+    
+    let userCandidateCount = 0;
+    userCreatedElections.forEach(election => {
+      userCandidateCount += (election.candidates?.length || 0);
+    });
+    
+    // Find most active election among user's elections
+    let mostActiveElection = null;
+    let highestParticipation = 0;
+    
+    userActiveElections.forEach(election => {
+      const participation = election.totalVotes / Math.max(1, election.voterCount || 0);
+      if (participation > highestParticipation) {
+        highestParticipation = participation;
+        mostActiveElection = election;
+      }
+    });
+    
+    setUserStats({
+      activeElections: userActiveElections,
+      completedElections: userCompletedElections,
+      upcomingElections: userUpcomingElections,
+      userVoteCount,
+      userCandidateCount,
+      mostActiveElection
+    });
+    
+  }, [allElections, isRegisteredForElection, account, electionsLoading, registrationLoading]);
   
   // Skeleton loader for loading state
-  if (isLoading) {
+  if (electionsLoading || registrationLoading) {
     return (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {[...Array(4)].map((_, i) => (
@@ -66,63 +114,63 @@ const StatisticsPanel = () => {
           <div className="p-2 bg-indigo-100 rounded-md mr-3">
             <BarChart3 size={20} className="text-indigo-600" />
           </div>
-          <h3 className="text-sm font-medium text-gray-500">Active Elections</h3>
+          <h3 className="text-sm font-medium text-gray-500">Your Active Elections</h3>
         </div>
         <div className="flex items-end justify-between">
-          <div className="text-3xl font-bold text-gray-900">{activeElections.length}</div>
-          {activeElections.length > 0 && (
+          <div className="text-3xl font-bold text-gray-900">{userStats.activeElections.length}</div>
+          {userStats.activeElections.length > 0 && (
             <div className="text-sm text-green-600 flex items-center">
               <span className="inline-block w-2 h-2 rounded-full bg-green-500 mr-1"></span>
               In Progress
             </div>
           )}
         </div>
-        {mostActiveElection && (
+        {userStats.mostActiveElection && (
           <div className="mt-4 text-sm text-gray-500 truncate">
-            Most active: {mostActiveElection.title}
+            Most active: {userStats.mostActiveElection.title}
           </div>
         )}
       </div>
       
-      {/* Total Votes Stat */}
+      {/* Your Votes Stat */}
       <div className="bg-white rounded-lg shadow-sm p-6">
         <div className="flex items-center mb-3">
           <div className="p-2 bg-green-100 rounded-md mr-3">
             <Check size={20} className="text-green-600" />
           </div>
-          <h3 className="text-sm font-medium text-gray-500">Total Votes</h3>
+          <h3 className="text-sm font-medium text-gray-500">Your Votes</h3>
         </div>
         <div className="flex items-end justify-between">
-          <div className="text-3xl font-bold text-gray-900">{totalVotes}</div>
-          {totalVotes > 0 && totalVoters > 0 && (
+          <div className="text-3xl font-bold text-gray-900">{userStats.userVoteCount}</div>
+          {userStats.userVoteCount > 0 && (
             <div className="text-sm text-gray-600">
-              {formatPercentage(participationRate)}% participation
+              {formatPercentage(userStats.userVoteCount / Math.max(1, userStats.activeElections.length + userStats.completedElections.length) * 100)}% participation
             </div>
           )}
         </div>
         <div className="mt-4 text-sm text-gray-500">
-          Across {allElections.length} elections
+          Across {userStats.activeElections.length + userStats.completedElections.length} available elections
         </div>
       </div>
       
-      {/* Total Candidates Stat */}
+      {/* Your Candidates Stat */}
       <div className="bg-white rounded-lg shadow-sm p-6">
         <div className="flex items-center mb-3">
           <div className="p-2 bg-blue-100 rounded-md mr-3">
             <Users size={20} className="text-blue-600" />
           </div>
-          <h3 className="text-sm font-medium text-gray-500">Candidates</h3>
+          <h3 className="text-sm font-medium text-gray-500">Your Candidates</h3>
         </div>
         <div className="flex items-end justify-between">
-          <div className="text-3xl font-bold text-gray-900">{totalCandidates}</div>
-          {allElections.length > 0 && (
+          <div className="text-3xl font-bold text-gray-900">{userStats.userCandidateCount}</div>
+          {userStats.userCandidateCount > 0 && (
             <div className="text-sm text-gray-600">
-              ~{Math.round(totalCandidates / Math.max(1, allElections.length))} per election
+              In your created elections
             </div>
           )}
         </div>
         <div className="mt-4 text-sm text-gray-500">
-          {completedElections.length} elected candidates
+          {userStats.completedElections.length} completed elections
         </div>
       </div>
       
@@ -132,20 +180,20 @@ const StatisticsPanel = () => {
           <div className="p-2 bg-yellow-100 rounded-md mr-3">
             <Calendar size={20} className="text-yellow-600" />
           </div>
-          <h3 className="text-sm font-medium text-gray-500">Upcoming Elections</h3>
+          <h3 className="text-sm font-medium text-gray-500">Your Upcoming Elections</h3>
         </div>
         <div className="flex items-end justify-between">
-          <div className="text-3xl font-bold text-gray-900">{upcomingElections.length}</div>
-          {upcomingElections.length > 0 && (
+          <div className="text-3xl font-bold text-gray-900">{userStats.upcomingElections.length}</div>
+          {userStats.upcomingElections.length > 0 && (
             <div className="text-sm text-blue-600 flex items-center">
               <span className="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span>
               Scheduled
             </div>
           )}
         </div>
-        {upcomingElections.length > 0 && (
+        {userStats.upcomingElections.length > 0 && (
           <div className="mt-4 text-sm text-gray-500 truncate">
-            Next: {upcomingElections[0].title}
+            Next: {userStats.upcomingElections[0].title}
           </div>
         )}
       </div>
