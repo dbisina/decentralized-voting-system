@@ -6,12 +6,16 @@ import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import useElections from '../hooks/useElections';
 import { useWeb3 } from '../contexts/Web3Context';
+import IPFSRegistrationService from '../services/ipfsRegistrationService';
 
 const VoterRegistrationManagementPage = () => {
     const { electionId } = useParams();
     const navigate = useNavigate();
     const { account } = useWeb3();
     const { allElections, addAllowedVoter, refreshElections } = useElections();
+    
+    // Initialize IPFS service
+    const ipfsService = new IPFSRegistrationService();
     
     const [election, setElection] = useState(null);
     const [registrations, setRegistrations] = useState([]);
@@ -41,50 +45,48 @@ const VoterRegistrationManagementPage = () => {
     
     // Load all registrations for this election
     useEffect(() => {
-        try {
-            // In production, this would be a server API call
-            const storedRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
-            
-            // Get all registrations for this election (don't filter by admin wallet)
-            const filteredRegistrations = storedRegistrations.filter(r => r.electionId === electionId);
-            
-            setRegistrations(filteredRegistrations);
-            setIsLoading(false);
-        } catch (error) {
-            console.error('Error loading registrations:', error);
-            setStatusMessage({
-                type: 'error',
-                message: 'Failed to load registrations'
-            });
-            setIsLoading(false);
+        const loadRegistrations = async () => {
+            try {
+                setIsLoading(true);
+                
+                // Fetch registrations from IPFS
+                const fetchedRegistrations = await ipfsService.getElectionRegistrations(electionId);
+                
+                setRegistrations(fetchedRegistrations);
+                setIsLoading(false);
+            } catch (error) {
+                console.error('Error loading registrations:', error);
+                setStatusMessage({
+                    type: 'error',
+                    message: 'Failed to load registrations'
+                });
+                setIsLoading(false);
+            }
+        };
+        
+        if (electionId) {
+            loadRegistrations();
         }
-    }, [electionId]);
+    }, [electionId, ipfsService]);
     
     // Handle approval of a registration
     const handleApproveRegistration = async (registration) => {
         try {
             setIsLoading(true);
             
-            // Update the registration status
+            // Update registration status in IPFS
+            await ipfsService.updateRegistrationStatus(registration, 'approved');
+            
+            // Add the voter's wallet address to the allowed voters list on the blockchain
+            await addAllowedVoter(electionId, registration.walletAddress);
+            
+            // Update local state
             const updatedRegistrations = registrations.map(r => {
                 if (r.walletAddress === registration.walletAddress) {
                     return { ...r, status: 'approved' };
                 }
                 return r;
             });
-            
-            // Save back to localStorage
-            const allRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
-            const updatedAllRegistrations = allRegistrations.map(r => {
-                if (r.electionId === electionId && r.walletAddress === registration.walletAddress) {
-                    return { ...r, status: 'approved' };
-                }
-                return r;
-            });
-            localStorage.setItem('voterRegistrations', JSON.stringify(updatedAllRegistrations));
-            
-            // Add the voter's wallet address to the allowed voters list on the blockchain
-            await addAllowedVoter(electionId, registration.walletAddress);
             
             setRegistrations(updatedRegistrations);
             setStatusMessage({
@@ -103,25 +105,20 @@ const VoterRegistrationManagementPage = () => {
     };
     
     // Handle rejection of a registration
-    const handleRejectRegistration = (registration) => {
+    const handleRejectRegistration = async (registration) => {
         try {
-            // Update the registration status
+            setIsLoading(true);
+            
+            // Update registration status in IPFS
+            await ipfsService.updateRegistrationStatus(registration, 'rejected');
+            
+            // Update local state
             const updatedRegistrations = registrations.map(r => {
                 if (r.walletAddress === registration.walletAddress) {
                     return { ...r, status: 'rejected' };
                 }
                 return r;
             });
-            
-            // Save back to localStorage
-            const allRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
-            const updatedAllRegistrations = allRegistrations.map(r => {
-                if (r.electionId === electionId && r.walletAddress === registration.walletAddress) {
-                    return { ...r, status: 'rejected' };
-                }
-                return r;
-            });
-            localStorage.setItem('voterRegistrations', JSON.stringify(updatedAllRegistrations));
             
             setRegistrations(updatedRegistrations);
             setStatusMessage({
@@ -134,6 +131,8 @@ const VoterRegistrationManagementPage = () => {
                 type: 'error',
                 message: 'Failed to reject registration'
             });
+        } finally {
+            setIsLoading(false);
         }
     };
     

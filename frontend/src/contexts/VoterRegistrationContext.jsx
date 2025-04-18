@@ -1,6 +1,6 @@
-// src/contexts/VoterRegistrationContext.jsx
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useWeb3 } from './Web3Context';
+import IPFSRegistrationService from '../services/ipfsRegistrationService';
 
 // Create context
 const VoterRegistrationContext = createContext();
@@ -15,8 +15,11 @@ export const VoterRegistrationProvider = ({ children }) => {
   const [registeredElections, setRegisteredElections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
+  
+  // Initialize IPFS service
+  const ipfsService = new IPFSRegistrationService();
 
-  // Load voter registrations from localStorage
+  // Load voter registrations from IPFS
   const loadRegistrations = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -27,17 +30,27 @@ export const VoterRegistrationProvider = ({ children }) => {
         return;
       }
 
-      // Get all registrations from localStorage
-      const allRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
+      // Get user registrations from local references
+      const userRefsKey = `user_registrations_${account}`;
+      const userRefs = JSON.parse(localStorage.getItem(userRefsKey) || '[]');
       
-      // Filter for the current user's approved registrations
-      const userRegistrations = allRegistrations.filter(
-        reg => reg.walletAddress.toLowerCase() === account.toLowerCase() && 
-              reg.status === 'approved'
-      );
+      // Initialize with empty array
+      const electionIds = [];
       
-      // Extract just the election IDs
-      const electionIds = userRegistrations.map(reg => reg.electionId);
+      // Check each reference to see if it's approved
+      for (const ref of userRefs) {
+        try {
+          // Get the full registration to check status
+          const registration = await ipfsService.getRegistration(ref.ipfsHash);
+          
+          // Only add to list if approved
+          if (registration && registration.status === 'approved') {
+            electionIds.push(ref.electionId);
+          }
+        } catch (err) {
+          console.warn(`Error loading registration ${ref.ipfsHash}:`, err);
+        }
+      }
       
       setRegisteredElections(electionIds);
     } catch (err) {
@@ -46,7 +59,7 @@ export const VoterRegistrationProvider = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [account]);
+  }, [account, ipfsService]);
 
   // Check if user is registered for a specific election
   const isRegisteredForElection = useCallback((electionId) => {
@@ -57,35 +70,23 @@ export const VoterRegistrationProvider = ({ children }) => {
     return registeredElections.some(id => id.toString() === targetId);
   }, [registeredElections]);
 
-  // Register a user for an election (for testing purposes)
+  // Register a user for an election (test function)
   const registerForElection = useCallback(async (electionId, status = 'approved') => {
     try {
       if (!account || !electionId) return false;
       
-      const allRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
+      // Create a test registration
+      const registration = {
+        electionId,
+        walletAddress: account,
+        fullName: 'Test User',
+        identifier: 'TEST-ID-123',
+        status,
+        timestamp: new Date().toISOString()
+      };
       
-      // Check if already registered
-      const existingReg = allRegistrations.findIndex(
-        reg => reg.walletAddress.toLowerCase() === account.toLowerCase() && 
-              reg.electionId === electionId
-      );
-      
-      if (existingReg >= 0) {
-        // Update existing registration
-        allRegistrations[existingReg].status = status;
-      } else {
-        // Add new registration
-        allRegistrations.push({
-          electionId,
-          walletAddress: account,
-          status,
-          timestamp: new Date().toISOString(),
-          fullName: 'Test User', // This would come from the registration form in a real app
-          identifier: 'TEST-ID-123'
-        });
-      }
-      
-      localStorage.setItem('voterRegistrations', JSON.stringify(allRegistrations));
+      // Store on IPFS
+      await ipfsService.storeRegistration(registration);
       
       // Reload registrations
       await loadRegistrations();
@@ -95,18 +96,30 @@ export const VoterRegistrationProvider = ({ children }) => {
       console.error('Error registering for election:', err);
       return false;
     }
-  }, [account, loadRegistrations]);
+  }, [account, ipfsService, loadRegistrations]);
+
+  // Check registration status
+  const getRegistrationStatus = useCallback(async (electionId) => {
+    if (!account || !electionId) return null;
+    
+    try {
+      return await ipfsService.getUserRegistrationStatus(account, electionId);
+    } catch (err) {
+      console.error('Error getting registration status:', err);
+      return null;
+    }
+  }, [account, ipfsService]);
 
   // Load registrations when component mounts or account changes
   useEffect(() => {
     loadRegistrations();
   }, [account, loadRegistrations]);
 
-  // Create value object to provide through context
   const value = {
     registeredElections,
     isRegisteredForElection,
     registerForElection,
+    getRegistrationStatus,
     refreshRegistrations: loadRegistrations,
     isLoading,
     error

@@ -6,12 +6,16 @@ import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import { useWeb3 } from '../contexts/Web3Context';
 import useElections from '../hooks/useElections';
+import IPFSRegistrationService from '../services/ipfsRegistrationService';
 
 const VoterRegistrationPage = () => {
   const { electionId, registrationCode } = useParams();
   const navigate = useNavigate();
   const { allElections } = useElections();
   const { account, connectWallet } = useWeb3();
+  
+  // Initialize IPFS service
+  const ipfsService = new IPFSRegistrationService();
   
   const [formData, setFormData] = useState({
     fullName: '',
@@ -37,25 +41,29 @@ const VoterRegistrationPage = () => {
   
   // Check if already registered
   useEffect(() => {
-    if (account && electionId) {
-      // Check if this wallet is already registered for this election
-      const registrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
-      const existingReg = registrations.find(
-        reg => reg.walletAddress.toLowerCase() === account.toLowerCase() && 
-              reg.electionId === electionId
-      );
-      
-      if (existingReg) {
-        setRegistered(true);
-        setMessage({
-          type: existingReg.status === 'approved' ? 'success' : 'info',
-          text: existingReg.status === 'approved' 
-            ? 'You are already registered and approved for this election.' 
-            : 'You have already submitted a registration request for this election. Please wait for admin approval.'
-        });
+    const checkRegistrationStatus = async () => {
+      if (account && electionId) {
+        try {
+          // Check registration status on IPFS
+          const status = await ipfsService.getUserRegistrationStatus(account, electionId);
+          
+          if (status) {
+            setRegistered(true);
+            setMessage({
+              type: status === 'approved' ? 'success' : 'info',
+              text: status === 'approved' 
+                ? 'You are already registered and approved for this election.' 
+                : 'You have already submitted a registration request for this election. Please wait for admin approval.'
+            });
+          }
+        } catch (error) {
+          console.error('Error checking registration status:', error);
+        }
       }
-    }
-  }, [account, electionId]);
+    };
+    
+    checkRegistrationStatus();
+  }, [account, electionId, ipfsService]);
   
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -87,8 +95,7 @@ const VoterRegistrationPage = () => {
     setRegisterLoading(true);
     
     try {
-      // For now, just store this information locally
-      // In a production app, this would be sent to a secure database
+      // Prepare registration data
       const registrationData = {
         electionId,
         registrationCode,
@@ -100,28 +107,8 @@ const VoterRegistrationPage = () => {
         status: 'pending' // Will be approved by admin
       };
       
-      // Store in localStorage for demo purposes
-      // In production, this would be a server API call
-      const existingRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
-      
-      // Check for existing registration
-      const existingIndex = existingRegistrations.findIndex(
-        reg => reg.walletAddress.toLowerCase() === account.toLowerCase() && 
-              reg.electionId === electionId
-      );
-      
-      if (existingIndex >= 0) {
-        // Update existing registration
-        existingRegistrations[existingIndex] = {
-          ...existingRegistrations[existingIndex],
-          ...registrationData
-        };
-      } else {
-        // Add new registration
-        existingRegistrations.push(registrationData);
-      }
-      
-      localStorage.setItem('voterRegistrations', JSON.stringify(existingRegistrations));
+      // Store on IPFS
+      await ipfsService.storeRegistration(registrationData);
       
       setRegistered(true);
       setMessage({

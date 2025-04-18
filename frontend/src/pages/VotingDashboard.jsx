@@ -1,55 +1,29 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Clock, Plus, AlertCircle } from 'lucide-react';
+import { Clock, Plus } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import StatisticsPanel from '../components/dashboard/StatisticsPanel';
 import ElectionCard from '../components/dashboard/ElectionCard';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import useElections from '../hooks/useElections';
-import useVoterRegistration from '../hooks/useVoterRegistration';
 import { timeRemaining } from '../utils/dateUtils';
 
 const VotingDashboard = () => {
   const navigate = useNavigate();
   const { 
-    activeElections: allActiveElections, 
-    upcomingElections: allUpcomingElections, 
+    activeElections, 
+    upcomingElections, 
     refreshElections, 
-    isLoading: electionsLoading, 
-    error: electionsError 
+    isLoading, 
+    error 
   } = useElections();
-
-  const {
-    isRegisteredForElection,
-    isLoading: registrationsLoading,
-    error: registrationsError,
-  } = useVoterRegistration();
   
-  // Filter elections by registration status
-  const [activeElections, setActiveElections] = useState([]);
-  const [upcomingElections, setUpcomingElections] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  // Apply registration filter when elections or registration data changes
+  // Refresh elections on component mount
   useEffect(() => {
-    if (!electionsLoading && !registrationsLoading) {
-      // Filter active elections to only show those the user is registered for
-      const filteredActive = allActiveElections.filter(election => 
-        isRegisteredForElection(election.id)
-      );
-      
-      // Filter upcoming elections to only show those the user is registered for
-      const filteredUpcoming = allUpcomingElections.filter(election => 
-        isRegisteredForElection(election.id)
-      );
-      
-      setActiveElections(filteredActive);
-      setUpcomingElections(filteredUpcoming);
-      setIsLoading(false);
-    }
-  }, [allActiveElections, allUpcomingElections, isRegisteredForElection, electionsLoading, registrationsLoading]);
-
+    refreshElections();
+  }, [refreshElections]);
+  
   // Navigate to voting page
   const handleVoteClick = (election) => {
     navigate(`/vote/${election.id}`);
@@ -77,8 +51,6 @@ const VotingDashboard = () => {
       </div>
     ));
   };
-
-  const error = electionsError || registrationsError;
   
   return (
     <DashboardLayout>
@@ -88,7 +60,7 @@ const VotingDashboard = () => {
       {/* Active Elections */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-6">
-          <h2 className="text-xl font-bold text-gray-800">Your Active Elections</h2>
+          <h2 className="text-xl font-bold text-gray-800">Active Elections</h2>
           <Button
             variant="primary"
             size="sm"
@@ -130,7 +102,7 @@ const VotingDashboard = () => {
             <div className="text-center py-8">
               <h3 className="text-lg font-medium text-gray-800 mb-2">No Active Elections</h3>
               <p className="text-gray-600 mb-4">
-                You are not registered for any active elections at this time.
+                There are currently no active elections available for voting.
               </p>
               <Button 
                 variant="primary"
@@ -147,7 +119,7 @@ const VotingDashboard = () => {
       
       {/* Upcoming Elections */}
       <div>
-        <h2 className="text-xl font-bold text-gray-800 mb-6">Your Upcoming Elections</h2>
+        <h2 className="text-xl font-bold text-gray-800 mb-6">Upcoming Elections</h2>
         
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -170,59 +142,44 @@ const VotingDashboard = () => {
             <div className="text-center py-8">
               <h3 className="text-lg font-medium text-gray-800 mb-2">No Upcoming Elections</h3>
               <p className="text-gray-600">
-                You are not registered for any upcoming elections at this time.
+                There are no upcoming elections scheduled at this time.
               </p>
             </div>
           </Card>
         )}
       </div>
       
-      {/* Registration Info Card */}
+      {/* Recent Voting Activity */}
       <div className="mt-8">
-        <Card className="bg-blue-50 border border-blue-200">
-          <div className="flex items-start">
-            <AlertCircle size={24} className="text-blue-600 mr-3 flex-shrink-0 mt-1" />
-            <div>
-              <h3 className="font-bold text-gray-800 mb-2">Election Registration Information</h3>
-              <p className="text-gray-700 mb-2">
-                You will only see elections here that you have been registered for. 
-                If you received a registration link, please use it to register for the election.
-              </p>
-              <p className="text-gray-700">
-                If you're expecting to see an election but don't see it here, please contact the election administrator.
-              </p>
-            </div>
+        <h2 className="text-xl font-bold text-gray-800 mb-6">Your Recent Activity</h2>
+        
+        <Card>
+          <div className="divide-y divide-gray-200">
+            {activeElections.slice(0, 3).map(election => (
+              <div key={election.id} className="py-4 flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-800">{election.title}</h3>
+                  <div className="text-sm text-gray-500">
+                    {election.hasVoted ? 'You have voted in this election' : 'You have not voted yet'}
+                  </div>
+                </div>
+                <div className="flex items-center">
+                  <Clock size={16} className="text-indigo-500 mr-1" />
+                  <span className="text-sm text-indigo-600 font-medium">
+                    {timeRemaining(election.endTime)}
+                  </span>
+                </div>
+              </div>
+            ))}
+            
+            {activeElections.length === 0 && (
+              <div className="py-6 text-center">
+                <p className="text-gray-500">No recent activity to display</p>
+              </div>
+            )}
           </div>
         </Card>
       </div>
-      
-      {/* Recent Voting Activity (if needed) */}
-      {activeElections.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-xl font-bold text-gray-800 mb-6">Your Recent Activity</h2>
-          
-          <Card>
-            <div className="divide-y divide-gray-200">
-              {activeElections.slice(0, 3).map(election => (
-                <div key={election.id} className="py-4 flex justify-between items-center">
-                  <div>
-                    <h3 className="text-lg font-medium text-gray-800">{election.title}</h3>
-                    <div className="text-sm text-gray-500">
-                      {election.hasVoted ? 'You have voted in this election' : 'You have not voted yet'}
-                    </div>
-                  </div>
-                  <div className="flex items-center">
-                    <Clock size={16} className="text-indigo-500 mr-1" />
-                    <span className="text-sm text-indigo-600 font-medium">
-                      {timeRemaining(election.endTime)}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </div>
-      )}
     </DashboardLayout>
   );
 };

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { BarChart3, Users, Check, Calendar } from 'lucide-react';
 import useElections from '../../hooks/useElections';
 import { useVoterRegistration } from '../../contexts/VoterRegistrationContext';
@@ -15,7 +15,11 @@ const StatisticsPanel = () => {
     isLoading: electionsLoading 
   } = useElections();
   
-  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
+  const { 
+    isRegisteredForElection, 
+    isLoading: registrationLoading 
+  } = useVoterRegistration();
+  
   const { account } = useWeb3();
   
   const [userStats, setUserStats] = useState({
@@ -27,9 +31,11 @@ const StatisticsPanel = () => {
     mostActiveElection: null
   });
   
-  // Calculate personalized statistics whenever elections data or registration status changes
-  useEffect(() => {
-    if (electionsLoading || registrationLoading || !account) return;
+  // Memoize the function to avoid re-creation on every render
+  const calculateStats = useCallback(() => {
+    if (electionsLoading || registrationLoading || !account || !Array.isArray(allElections)) {
+      return null;
+    }
 
     // Filter elections that the user is registered for or is the admin of
     const userActiveElections = allElections.filter(election => 
@@ -81,16 +87,23 @@ const StatisticsPanel = () => {
       }
     });
     
-    setUserStats({
+    return {
       activeElections: userActiveElections,
       completedElections: userCompletedElections,
       upcomingElections: userUpcomingElections,
       userVoteCount,
       userCandidateCount,
       mostActiveElection
-    });
-    
+    };
   }, [allElections, isRegisteredForElection, account, electionsLoading, registrationLoading]);
+  
+  // Calculate personalized statistics when dependencies change
+  useEffect(() => {
+    const stats = calculateStats();
+    if (stats) {
+      setUserStats(stats);
+    }
+  }, [calculateStats]);
   
   // Skeleton loader for loading state
   if (electionsLoading || registrationLoading) {
