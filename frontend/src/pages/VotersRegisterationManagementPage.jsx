@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Check, X, Users, Copy, ExternalLink } from 'lucide-react';
+import { Check, X, Users, Copy, ExternalLink, AlertTriangle, RefreshCw, Search, Plus, Info } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import useElections from '../hooks/useElections';
 import { useWeb3 } from '../contexts/Web3Context';
 import IPFSRegistrationService from '../services/ipfsRegistrationService';
+
+// Define a proxy service for handling CORS issues (only in development)
+const corsProxyUrl = process.env.NODE_ENV === 'development' 
+  ? 'https://corsproxy.io/?' 
+  : '';
 
 const VoterRegistrationManagementPage = () => {
     const { electionId } = useParams();
@@ -19,11 +24,15 @@ const VoterRegistrationManagementPage = () => {
     
     const [election, setElection] = useState(null);
     const [registrations, setRegistrations] = useState([]);
+    const [filteredRegistrations, setFilteredRegistrations] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [statusMessage, setStatusMessage] = useState(null);
     const [registrationLink, setRegistrationLink] = useState('');
+    const [searchTerm, setSearchTerm] = useState('');
+    const [processingIds, setProcessingIds] = useState(new Set());
+    const [viewOption, setViewOption] = useState('all'); // 'all', 'pending', 'approved', 'rejected'
     
-    // Generate a random registration code if none exists
+    // Generate a registration code if none exists
     useEffect(() => {
         if (election && !election.registrationCode) {
             const newCode = Math.random().toString(36).substring(2, 10);
@@ -43,36 +52,85 @@ const VoterRegistrationManagementPage = () => {
         }
     }, [allElections, electionId]);
     
-    // Load all registrations for this election
+    // Filter registrations when they change or search/view options change
     useEffect(() => {
-        const loadRegistrations = async () => {
-            try {
-                setIsLoading(true);
-                
-                // Fetch registrations from IPFS
-                const fetchedRegistrations = await ipfsService.getElectionRegistrations(electionId);
-                
-                setRegistrations(fetchedRegistrations);
-                setIsLoading(false);
-            } catch (error) {
-                console.error('Error loading registrations:', error);
-                setStatusMessage({
-                    type: 'error',
-                    message: 'Failed to load registrations'
-                });
-                setIsLoading(false);
-            }
-        };
+        let filtered = [...registrations];
         
+        // Apply status filter
+        if (viewOption !== 'all') {
+            filtered = filtered.filter(reg => reg.status === viewOption);
+        }
+        
+        // Apply search filter
+        if (searchTerm) {
+            const search = searchTerm.toLowerCase();
+            filtered = filtered.filter(reg => 
+                (reg.fullName && reg.fullName.toLowerCase().includes(search)) ||
+                (reg.email && reg.email.toLowerCase().includes(search)) ||
+                (reg.identifier && reg.identifier.toLowerCase().includes(search)) ||
+                (reg.walletAddress && reg.walletAddress.toLowerCase().includes(search))
+            );
+        }
+        
+        setFilteredRegistrations(filtered);
+    }, [registrations, searchTerm, viewOption]);
+    
+    // Load all registrations for this election using CORS proxy if needed
+    const loadRegistrations = async () => {
+        try {
+            setIsLoading(true);
+            setStatusMessage(null);
+            
+            // Fetch registrations from IPFS
+            const fetchedRegistrations = await ipfsService.getElectionRegistrations(electionId);
+            
+            setRegistrations(fetchedRegistrations);
+            
+            if (fetchedRegistrations.length > 0) {
+                setStatusMessage({
+                    type: 'success',
+                    message: `Successfully loaded ${fetchedRegistrations.length} voter registrations`
+                });
+                
+                // Auto-clear success message after 3 seconds
+                setTimeout(() => {
+                    setStatusMessage(prev => 
+                        prev?.type === 'success' ? null : prev
+                    );
+                }, 3000);
+            } else {
+                setStatusMessage({
+                    type: 'info',
+                    message: 'No registrations found for this election'
+                });
+            }
+        } catch (error) {
+            console.error('Error loading registrations:', error);
+            setStatusMessage({
+                type: 'error',
+                message: 'Failed to load registrations. The API may be rate limited or experiencing CORS issues.'
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    // Load registrations when component mounts
+    useEffect(() => {
         if (electionId) {
             loadRegistrations();
         }
-    }, [electionId, ipfsService]);
+    }, [electionId]);
     
     // Handle approval of a registration
     const handleApproveRegistration = async (registration) => {
+        if (processingIds.has(registration.walletAddress)) {
+            return; // Prevent multiple submissions
+        }
+        
         try {
-            setIsLoading(true);
+            // Add to processing set
+            setProcessingIds(prev => new Set([...prev, registration.walletAddress]));
             
             // Update registration status in IPFS
             await ipfsService.updateRegistrationStatus(registration, 'approved');
@@ -81,58 +139,87 @@ const VoterRegistrationManagementPage = () => {
             await addAllowedVoter(electionId, registration.walletAddress);
             
             // Update local state
-            const updatedRegistrations = registrations.map(r => {
-                if (r.walletAddress === registration.walletAddress) {
-                    return { ...r, status: 'approved' };
-                }
-                return r;
-            });
+            setRegistrations(prev => 
+                prev.map(r => 
+                    r.walletAddress === registration.walletAddress 
+                        ? { ...r, status: 'approved' } 
+                        : r
+                )
+            );
             
-            setRegistrations(updatedRegistrations);
             setStatusMessage({
                 type: 'success',
                 message: `Approved ${registration.fullName}'s registration`
             });
+            
+            // Auto-clear success message after 3 seconds
+            setTimeout(() => {
+                setStatusMessage(prev => 
+                    prev?.type === 'success' ? null : prev
+                );
+            }, 3000);
         } catch (error) {
             console.error('Error approving registration:', error);
             setStatusMessage({
                 type: 'error',
-                message: 'Failed to approve registration'
+                message: `Failed to approve registration: ${error.message}`
             });
         } finally {
-            setIsLoading(false);
+            // Remove from processing set
+            setProcessingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(registration.walletAddress);
+                return newSet;
+            });
         }
     };
     
     // Handle rejection of a registration
     const handleRejectRegistration = async (registration) => {
+        if (processingIds.has(registration.walletAddress)) {
+            return; // Prevent multiple submissions
+        }
+        
         try {
-            setIsLoading(true);
+            // Add to processing set
+            setProcessingIds(prev => new Set([...prev, registration.walletAddress]));
             
             // Update registration status in IPFS
             await ipfsService.updateRegistrationStatus(registration, 'rejected');
             
             // Update local state
-            const updatedRegistrations = registrations.map(r => {
-                if (r.walletAddress === registration.walletAddress) {
-                    return { ...r, status: 'rejected' };
-                }
-                return r;
-            });
+            setRegistrations(prev => 
+                prev.map(r => 
+                    r.walletAddress === registration.walletAddress 
+                        ? { ...r, status: 'rejected' } 
+                        : r
+                )
+            );
             
-            setRegistrations(updatedRegistrations);
             setStatusMessage({
                 type: 'success',
                 message: `Rejected ${registration.fullName}'s registration`
             });
+            
+            // Auto-clear success message after 3 seconds
+            setTimeout(() => {
+                setStatusMessage(prev => 
+                    prev?.type === 'success' ? null : prev
+                );
+            }, 3000);
         } catch (error) {
             console.error('Error rejecting registration:', error);
             setStatusMessage({
                 type: 'error',
-                message: 'Failed to reject registration'
+                message: `Failed to reject registration: ${error.message}`
             });
         } finally {
-            setIsLoading(false);
+            // Remove from processing set
+            setProcessingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(registration.walletAddress);
+                return newSet;
+            });
         }
     };
     
@@ -143,6 +230,13 @@ const VoterRegistrationManagementPage = () => {
             type: 'success',
             message: 'Registration link copied to clipboard'
         });
+        
+        // Auto-clear success message after 3 seconds
+        setTimeout(() => {
+            setStatusMessage(prev => 
+                prev?.type === 'success' ? null : prev
+            );
+        }, 3000);
     };
     
     // Check if user has permission to manage this election
@@ -151,12 +245,84 @@ const VoterRegistrationManagementPage = () => {
         return election.admin && election.admin.toLowerCase() === account.toLowerCase();
     };
     
-    if (isLoading) {
+    // Create dummy registrations for testing
+    const handleAddTestRegistrations = async () => {
+        try {
+            setIsLoading(true);
+            setStatusMessage({
+                type: 'info',
+                message: 'Creating test registrations...'
+            });
+            
+            // Generate 5 test registrations
+            await ipfsService.generateTestRegistrations(electionId, 5);
+            
+            // Reload registrations
+            await loadRegistrations();
+            
+            setStatusMessage({
+                type: 'success',
+                message: 'Added test registrations successfully'
+            });
+        } catch (error) {
+            console.error('Error adding test registrations:', error);
+            setStatusMessage({
+                type: 'error',
+                message: `Failed to add test registrations: ${error.message}`
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+    
+    // Calculate stats
+    const stats = {
+        total: registrations.length,
+        pending: registrations.filter(r => r.status === 'pending').length,
+        approved: registrations.filter(r => r.status === 'approved').length,
+        rejected: registrations.filter(r => r.status === 'rejected').length
+    };
+    
+    if (!election && !isLoading) {
         return (
             <DashboardLayout>
-                <div className="flex justify-center items-center h-64">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                <div className="mb-6">
+                    <h1 className="text-2xl font-bold text-gray-800">Election Not Found</h1>
                 </div>
+                
+                <Card className="bg-red-50 border-red-200">
+                    <div className="text-red-800">
+                        <p className="font-bold mb-2">The requested election could not be found.</p>
+                        <p>The election may have been deleted or the ID is incorrect.</p>
+                        <Button 
+                            variant="primary"
+                            className="mt-6"
+                            onClick={() => navigate('/manage')}
+                        >
+                            Back to Management
+                        </Button>
+                    </div>
+                </Card>
+            </DashboardLayout>
+        );
+    }
+    
+    // Loading state
+    if (isLoading && registrations.length === 0) {
+        return (
+            <DashboardLayout>
+                <div className="mb-6">
+                    <h1 className="text-2xl font-bold text-gray-800">Voter Registration Management</h1>
+                    <p className="text-gray-600 mt-1">
+                        Loading registration data...
+                    </p>
+                </div>
+                
+                <Card>
+                    <div className="flex justify-center items-center h-64">
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+                    </div>
+                </Card>
             </DashboardLayout>
         );
     }
@@ -196,12 +362,48 @@ const VoterRegistrationManagementPage = () => {
             </div>
             
             {statusMessage && (
-                <div className={`mb-6 p-4 rounded-md ${
-                    statusMessage.type === 'error' ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+                <div className={`mb-6 p-4 rounded-md flex items-start ${
+                    statusMessage.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 
+                    statusMessage.type === 'success' ? 'bg-green-50 text-green-700 border border-green-200' :
+                    'bg-blue-50 text-blue-700 border border-blue-200'
                 }`}>
-                    {statusMessage.message}
+                    {statusMessage.type === 'error' ? 
+                        <AlertTriangle size={20} className="mr-3 mt-0.5 flex-shrink-0" /> : 
+                        statusMessage.type === 'success' ? 
+                        <Check size={20} className="mr-3 mt-0.5 flex-shrink-0" /> :
+                        <Info size={20} className="mr-3 mt-0.5 flex-shrink-0" />
+                    }
+                    <div>{statusMessage.message}</div>
                 </div>
             )}
+            
+            {/* Registration Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <Card>
+                    <div className="text-center">
+                        <div className="text-3xl font-bold text-gray-800">{stats.total}</div>
+                        <div className="text-sm text-gray-500">Total Registrations</div>
+                    </div>
+                </Card>
+                <Card>
+                    <div className="text-center">
+                        <div className="text-3xl font-bold text-yellow-600">{stats.pending}</div>
+                        <div className="text-sm text-gray-500">Pending</div>
+                    </div>
+                </Card>
+                <Card>
+                    <div className="text-center">
+                        <div className="text-3xl font-bold text-green-600">{stats.approved}</div>
+                        <div className="text-sm text-gray-500">Approved</div>
+                    </div>
+                </Card>
+                <Card>
+                    <div className="text-center">
+                        <div className="text-3xl font-bold text-red-600">{stats.rejected}</div>
+                        <div className="text-sm text-gray-500">Rejected</div>
+                    </div>
+                </Card>
+            </div>
             
             <Card className="mb-6">
                 <h2 className="text-lg font-bold text-gray-800 mb-4">Registration Link</h2>
@@ -220,26 +422,126 @@ const VoterRegistrationManagementPage = () => {
                         variant="outline"
                         size="sm"
                         onClick={copyRegistrationLink}
-                        className="ml-2"
+                        className="ml-2 flex items-center"
                     >
                         <Copy size={16} className="mr-1" />
                         Copy
                     </Button>
                 </div>
+                
+                {/* Add option for testing */}
+                {process.env.NODE_ENV === 'development' && (
+                    <div className="mt-4 p-3 bg-yellow-50 rounded-md border border-yellow-200">
+                        <h3 className="text-sm font-medium text-yellow-800 mb-2">Development Tools</h3>
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            onClick={handleAddTestRegistrations}
+                            disabled={isLoading}
+                            className="flex items-center"
+                        >
+                            <Plus size={16} className="mr-1" />
+                            Add Test Registrations
+                        </Button>
+                    </div>
+                )}
             </Card>
             
             <Card>
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col sm:flex-row items-center justify-between mb-6 gap-4">
                     <h2 className="text-lg font-bold text-gray-800">Voter Registrations</h2>
-                    <div className="text-sm text-gray-500 flex items-center">
-                        <Users size={16} className="mr-1" />
-                        {registrations.length} {registrations.length === 1 ? 'registration' : 'registrations'}
+                    
+                    <div className="flex items-center gap-3 w-full sm:w-auto">
+                        <div className="relative flex-1 sm:flex-initial sm:min-w-[300px]">
+                            <Search size={18} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                            <input
+                                type="text"
+                                placeholder="Search registrations..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                        </div>
+                        
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={loadRegistrations}
+                            disabled={isLoading}
+                            className="flex items-center flex-shrink-0"
+                        >
+                            <RefreshCw size={16} className={`mr-1 ${isLoading ? 'animate-spin' : ''}`} />
+                            Refresh
+                        </Button>
                     </div>
                 </div>
                 
+                <div className="mb-4 flex flex-wrap gap-2">
+                    <Button
+                        variant={viewOption === 'all' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewOption('all')}
+                    >
+                        All ({stats.total})
+                    </Button>
+                    <Button
+                        variant={viewOption === 'pending' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewOption('pending')}
+                    >
+                        Pending ({stats.pending})
+                    </Button>
+                    <Button
+                        variant={viewOption === 'approved' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewOption('approved')}
+                    >
+                        Approved ({stats.approved})
+                    </Button>
+                    <Button
+                        variant={viewOption === 'rejected' ? 'primary' : 'outline'}
+                        size="sm"
+                        onClick={() => setViewOption('rejected')}
+                    >
+                        Rejected ({stats.rejected})
+                    </Button>
+                </div>
+                
+                {isLoading && registrations.length > 0 && (
+                    <div className="bg-blue-50 text-blue-700 px-4 py-2 rounded-md mb-4 flex items-center">
+                        <div className="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full mr-2"></div>
+                        <span>Refreshing registrations...</span>
+                    </div>
+                )}
+                
                 {registrations.length === 0 ? (
+                    <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-lg">
+                        <Users size={48} className="text-gray-300 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-gray-800 mb-2">No Voter Registrations</h3>
+                        <p className="text-gray-500 mb-6">
+                            No one has registered for this election yet. Share the registration link to get started.
+                        </p>
+                        <Button
+                            variant="primary"
+                            onClick={copyRegistrationLink}
+                            className="flex items-center mx-auto"
+                        >
+                            <Copy size={16} className="mr-1" />
+                            Copy Registration Link
+                        </Button>
+                    </div>
+                ) : filteredRegistrations.length === 0 ? (
                     <div className="text-center py-8 text-gray-500">
-                        No voter registrations yet. Share the registration link to get started.
+                        <p>No registrations match your search or filter criteria.</p>
+                        <button
+                            onClick={() => {
+                                setSearchTerm('');
+                                setViewOption('all');
+                            }}
+                            className="text-indigo-600 hover:text-indigo-800 mt-2"
+                        >
+                            Clear filters
+                        </button>
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
@@ -264,8 +566,8 @@ const VoterRegistrationManagementPage = () => {
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {registrations.map((registration, index) => (
-                                    <tr key={index}>
+                                {filteredRegistrations.map((registration, index) => (
+                                    <tr key={index} className="hover:bg-gray-50">
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="text-sm font-medium text-gray-900">{registration.fullName}</div>
                                             {registration.email && (
@@ -274,6 +576,9 @@ const VoterRegistrationManagementPage = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="text-sm text-gray-900">{registration.identifier}</div>
+                                            <div className="text-xs text-gray-500">
+                                                {new Date(registration.timestamp).toLocaleDateString()}
+                                            </div>
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap">
                                             <div className="flex items-center text-sm font-mono text-gray-500">
@@ -305,19 +610,35 @@ const VoterRegistrationManagementPage = () => {
                                                         variant="success"
                                                         size="sm"
                                                         onClick={() => handleApproveRegistration(registration)}
-                                                        disabled={isLoading}
+                                                        disabled={processingIds.has(registration.walletAddress)}
+                                                        className={processingIds.has(registration.walletAddress) ? 'opacity-50' : ''}
                                                     >
-                                                        <Check size={16} />
+                                                        {processingIds.has(registration.walletAddress) ? (
+                                                            <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full"></div>
+                                                        ) : (
+                                                            <Check size={16} />
+                                                        )}
                                                     </Button>
                                                     <Button
                                                         variant="danger"
                                                         size="sm"
                                                         onClick={() => handleRejectRegistration(registration)}
-                                                        disabled={isLoading}
+                                                        disabled={processingIds.has(registration.walletAddress)}
+                                                        className={processingIds.has(registration.walletAddress) ? 'opacity-50' : ''}
                                                     >
-                                                        <X size={16} />
+                                                        {processingIds.has(registration.walletAddress) ? (
+                                                            <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full"></div>
+                                                        ) : (
+                                                            <X size={16} />
+                                                        )}
                                                     </Button>
                                                 </div>
+                                            )}
+                                            {registration.status === 'approved' && (
+                                                <div className="text-green-600 text-xs">Voter approved</div>
+                                            )}
+                                            {registration.status === 'rejected' && (
+                                                <div className="text-red-600 text-xs">Registration rejected</div>
                                             )}
                                         </td>
                                     </tr>

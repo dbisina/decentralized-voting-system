@@ -1,3 +1,5 @@
+// frontend/src/hooks/useElections.jsx
+
 import { useState, useEffect, useCallback } from 'react';
 import { useWeb3 } from '../contexts/Web3Context';
 import BlockchainService from '../services/blockchainService';
@@ -33,7 +35,7 @@ const useElections = () => {
       const elections = await blockchainService.getAllElections();
       
       // Process and enhance election data
-      const processedElections = await enhanceElectionsWithIPFSData(elections);
+      const processedElections = await enhanceElectionsWithData(elections);
       
       setAllElections(processedElections);
       
@@ -47,6 +49,8 @@ const useElections = () => {
       setCompletedElections(completed);
       setUpcomingElections(upcoming);
       setDraftElections(drafts);
+
+      console.log(`Fetched ${processedElections.length} elections: ${active.length} active, ${completed.length} completed, ${upcoming.length} upcoming`);
     } catch (err) {
       console.error('Error fetching elections:', err);
       setError('Failed to load elections. Please try again later.');
@@ -55,167 +59,163 @@ const useElections = () => {
     }
   }, [contract, signer]);
   
-/**
- * Enhance election data with IPFS content
- * @param {Array} elections - Raw election data from blockchain
- * @returns {Promise<Array>} Enhanced election data
- */
-const enhanceElectionsWithIPFSData = async (elections) => {
-  // Process each election to fetch additional data from IPFS
-  return Promise.all(elections.map(async (election) => {
-    try {
-      // Log election data for debugging
-      console.log(`Enhancing election ${election.id}: ${election.title}`);
-      console.log(`Candidate count: ${election.candidateCount}`);
-      
-      // Fetch election details from IPFS if hash exists
-      let additionalDetails = {};
-      if (election.description && election.description.startsWith('Qm')) {
-        try {
-          console.log(`Fetching IPFS data for election description: ${election.description}`);
-          additionalDetails = await ipfsService.getFromIPFS(election.description);
-          console.log('Additional details retrieved:', additionalDetails);
-        } catch (ipfsError) {
-          console.warn(`Could not fetch IPFS data for election ${election.id}:`, ipfsError);
-          // Continue without additional details
+  /**
+   * Enhance elections with additional data from IPFS
+   */
+  const enhanceElectionsWithData = async (elections) => {
+    // Process elections to add status, format dates, etc.
+    return Promise.all(elections.map(async (election) => {
+      try {
+        // Add status based on dates and finalized state
+        const now = new Date();
+        const startTime = new Date(election.startTime);
+        const endTime = new Date(election.endTime);
+        
+        let status;
+        if (election.finalized) {
+          status = 'completed';
+        } else if (now < startTime) {
+          status = 'upcoming';
+        } else if (now > endTime) {
+          status = 'ended';
+        } else {
+          status = 'active';
         }
-      }
-      
-      // Process candidates - this is the critical part for your issue
-      let candidatesWithDetails = [];
-      if (election.candidates && Array.isArray(election.candidates)) {
-        console.log(`Found ${election.candidates.length} candidates to enhance`);
         
-        candidatesWithDetails = await Promise.all(election.candidates.map(async (candidate) => {
-          try {
-            let candidateDetails = {};
-            if (candidate.details && candidate.details.startsWith('Qm')) {
-              try {
-                console.log(`Fetching IPFS data for candidate ${candidate.id}: ${candidate.details}`);
-                candidateDetails = await ipfsService.getFromIPFS(candidate.details);
-                console.log(`Retrieved details for candidate ${candidate.id}:`, candidateDetails);
-              } catch (ipfsError) {
-                console.warn(`Could not fetch IPFS data for candidate ${candidate.id}:`, ipfsError);
-                // Use fallback data
-                candidateDetails = {
-                  name: candidate.name || "Candidate",
-                  bio: "Candidate information unavailable",
-                  platform: ""
-                };
-              }
-            }
-            
-            // Return the combined candidate data
-            return {
-              ...candidate,
-              ...candidateDetails
-            };
-          } catch (error) {
-            console.error(`Error processing candidate ${candidate.id}:`, error);
-            // Return the original candidate to prevent breaking the array
-            return candidate;
-          }
-        }));
-      } else {
-        console.warn(`No candidates array found for election ${election.id}`);
+        // Format dates for display
+        const formattedStartDate = startTime.toLocaleDateString();
+        const formattedEndDate = endTime.toLocaleDateString();
         
-        // If candidates is not an array, try to fetch them directly
-        if (election.candidateCount > 0) {
-          console.log(`Attempting to fetch ${election.candidateCount} candidates directly for election ${election.id}`);
-          
+        // Calculate time remaining
+        const timeRemaining = calculateTimeRemaining(election);
+        
+        // Check if user has voted in this election
+        let hasVoted = false;
+        if (account && election.id) {
           try {
-            // Create a new blockchain service instance
             const blockchainService = new BlockchainService(contract, signer);
-            // Fetch candidates directly
+            hasVoted = await blockchainService.hasVoted(election.id, account);
+          } catch (voteCheckError) {
+            console.warn(`Error checking if user has voted in election ${election.id}:`, voteCheckError);
+          }
+        }
+        
+        // Try to enhance with IPFS data if available
+        let enhancedData = {};
+        if (election.description && election.description.startsWith('Qm')) {
+          try {
+            const ipfsData = await ipfsService.getFromIPFS(election.description);
+            if (ipfsData && typeof ipfsData === 'object') {
+              enhancedData = ipfsData;
+            }
+          } catch (ipfsError) {
+            console.warn(`Could not fetch IPFS data for election ${election.id}:`, ipfsError);
+          }
+        }
+        
+        // Prepare candidates array with enhanced data
+        let enhancedCandidates = [];
+        
+        if (election.candidates && Array.isArray(election.candidates)) {
+          // If we already have candidates array, enhance them
+          enhancedCandidates = await Promise.all(election.candidates.map(async (candidate) => {
+            try {
+              // If candidate has IPFS details, fetch and enhance
+              if (candidate.details && candidate.details.startsWith('Qm')) {
+                try {
+                  console.log(`Fetching IPFS data for candidate ${candidate.id}: ${candidate.details}`);
+                  const candidateDetails = await ipfsService.getFromIPFS(candidate.details);
+                  console.log(`Retrieved details for candidate ${candidate.id}:`, candidateDetails);
+                  
+                  // Return enhanced candidate
+                  return {
+                    ...candidate,
+                    ...candidateDetails
+                  };
+                } catch (ipfsError) {
+                  console.warn(`Could not fetch IPFS data for candidate ${candidate.id}:`, ipfsError);
+                  return candidate;
+                }
+              }
+              return candidate;
+            } catch (error) {
+              console.error(`Error processing candidate ${candidate.id}:`, error);
+              return candidate;
+            }
+          }));
+        } else if (election.candidateCount > 0) {
+          // If no candidates array but count > 0, fetch them
+          try {
+            console.log(`No candidates array found. Fetching ${election.candidateCount} candidates for election ${election.id}`);
+            const blockchainService = new BlockchainService(contract, signer);
+            
+            // Get candidates directly from blockchain
             const fetchedCandidates = await blockchainService.getElectionCandidates(
               election.id, 
               election.candidateCount
             );
             
-            console.log(`Fetched ${fetchedCandidates.length} candidates directly:`, fetchedCandidates);
+            console.log(`Fetched ${fetchedCandidates.length} candidates for election ${election.id}`);
             
-            // Process the fetched candidates
-            candidatesWithDetails = await Promise.all(fetchedCandidates.map(async (candidate) => {
+            // Enhance each candidate with IPFS data
+            enhancedCandidates = await Promise.all(fetchedCandidates.map(async (candidate) => {
               try {
-                let candidateDetails = {};
                 if (candidate.details && candidate.details.startsWith('Qm')) {
                   try {
-                    candidateDetails = await ipfsService.getFromIPFS(candidate.details);
+                    const candidateDetails = await ipfsService.getFromIPFS(candidate.details);
+                    return {
+                      ...candidate,
+                      ...candidateDetails
+                    };
                   } catch (ipfsError) {
                     console.warn(`Could not fetch IPFS data for candidate ${candidate.id}:`, ipfsError);
+                    return candidate;
                   }
                 }
-                
-                return {
-                  ...candidate,
-                  ...candidateDetails
-                };
+                return candidate;
               } catch (error) {
                 console.error(`Error processing fetched candidate ${candidate.id}:`, error);
                 return candidate;
               }
             }));
           } catch (fetchError) {
-            console.error(`Error fetching candidates directly for election ${election.id}:`, fetchError);
-            candidatesWithDetails = [];
+            console.error(`Error fetching candidates for election ${election.id}:`, fetchError);
+            enhancedCandidates = [];
           }
-        } else {
-          candidatesWithDetails = [];
         }
+        
+        // Calculate voter participation
+        const participationPercentage = election.totalVotes > 0 && election.voterCount > 0
+          ? (election.totalVotes / election.voterCount * 100).toFixed(1)
+          : 0;
+        
+        // Return the enhanced election object
+        return {
+          ...election,
+          ...enhancedData,
+          candidates: enhancedCandidates,
+          status,
+          formattedStartDate,
+          formattedEndDate,
+          timeRemaining,
+          hasVoted,
+          participationPercentage
+        };
+      } catch (error) {
+        console.error(`Error enhancing election ${election.id}:`, error);
+        // Return a basic enhanced version to prevent breaking the array
+        return {
+          ...election,
+          status: election.finalized ? 'completed' : 'active',
+          candidates: election.candidates || [],
+          _enhancementError: error.message
+        };
       }
-      
-      // Calculate voter participation percentage
-      const participationPercentage = election.totalVotes > 0 
-        ? (election.totalVotes / Math.max(1, election.voterCount || 0) * 100).toFixed(1)
-        : 0;
-      
-      // Format dates for display
-      const formattedStartDate = new Date(election.startTime).toLocaleDateString();
-      const formattedEndDate = new Date(election.endTime).toLocaleDateString();
-      
-      // Determine election status
-      const now = new Date();
-      let status = '';
-      
-      if (election.finalized) {
-        status = 'completed';
-      } else if (now < new Date(election.startTime)) {
-        status = 'upcoming';
-      } else if (now > new Date(election.endTime)) {
-        status = 'ended';
-      } else {
-        status = 'active';
-      }
-      
-      // Prepare combined election object with all data
-      return {
-        ...election,
-        ...additionalDetails,
-        candidates: candidatesWithDetails,
-        participationPercentage,
-        formattedStartDate,
-        formattedEndDate,
-        timeRemaining: calculateTimeRemaining(election),
-        status
-      };
-    } catch (error) {
-      console.error(`Error processing election ${election.id}:`, error);
-      
-      // Return the original election object to prevent breaking the array
-      return {
-        ...election,
-        status: 'error',
-        errorMessage: error.message,
-        candidates: election.candidates || []
-      };
-    }
-  }));
-};
+    }));
+  };
   
   /**
    * Calculate time remaining for an election
-   * @param {Object} election - Election data
-   * @returns {string} Formatted time remaining
    */
   const calculateTimeRemaining = (election) => {
     const now = new Date();
@@ -258,8 +258,6 @@ const enhanceElectionsWithIPFSData = async (elections) => {
   
   /**
    * Create a new election
-   * @param {Object} electionData - Election data
-   * @returns {Promise<Object>} Transaction result
    */
   const createElection = async (electionData) => {
     if (!contract || !signer || !account) {
@@ -271,6 +269,7 @@ const enhanceElectionsWithIPFSData = async (elections) => {
       setError(null);
       
       // Store detailed information on IPFS
+      console.log('Storing election details on IPFS...');
       const ipfsCid = await ipfsService.storeElectionDetails({
         title: electionData.title,
         description: electionData.description,
@@ -278,7 +277,10 @@ const enhanceElectionsWithIPFSData = async (elections) => {
         additionalInfo: electionData.additionalInfo
       });
       
-      // Create election on blockchain with IPFS reference
+      console.log(`Stored election details on IPFS with CID: ${ipfsCid}`);
+      
+      // Create election on blockchain
+      console.log('Creating election on blockchain...');
       const blockchainService = new BlockchainService(contract, signer);
       const result = await blockchainService.createElection(
         electionData.title,
@@ -286,6 +288,8 @@ const enhanceElectionsWithIPFSData = async (elections) => {
         new Date(electionData.startDate).getTime(),
         new Date(electionData.endDate).getTime()
       );
+      
+      console.log(`Election created with ID: ${result.electionId}, TX: ${result.transactionHash}`);
       
       // Refresh elections list
       await fetchElections();
@@ -300,13 +304,8 @@ const enhanceElectionsWithIPFSData = async (elections) => {
     }
   };
   
-  // Update the addCandidate function in useElections.jsx to handle timing requirements:
-
   /**
-   * Add a candidate to an election
-   * @param {number} electionId - ID of the election
-   * @param {Object} candidateData - Candidate data
-   * @returns {Promise<Object>} Transaction result
+   * Add a candidate to an election with improved error handling
    */
   const addCandidate = async (electionId, candidateData) => {
     if (!contract || !signer || !account) {
@@ -317,6 +316,8 @@ const enhanceElectionsWithIPFSData = async (elections) => {
       setIsLoading(true);
       setError(null);
       
+      console.log(`Adding candidate to election ${electionId}:`, candidateData);
+      
       // Check if election can accept candidates
       const blockchainService = new BlockchainService(contract, signer);
       const election = await blockchainService.getElectionDetails(electionId);
@@ -326,26 +327,58 @@ const enhanceElectionsWithIPFSData = async (elections) => {
         throw new Error('Cannot add candidate after election has started. Please create a new election with a future start time.');
       }
       
-      // Handle different formats of candidateData for better flexibility
-      let candidateName, candidateDetails;
+      // Store candidate details on IPFS
+      let candidateName, candidateDetails, candidateMetadata;
       
       if (typeof candidateData === 'object') {
-        // If candidateData is an object, extract name and details
         candidateName = candidateData.name;
-        candidateDetails = candidateData.details || '';
+        candidateMetadata = {
+          name: candidateData.name,
+          bio: candidateData.bio || '',
+          platform: candidateData.platform || ''
+        };
       } else {
-        // For backward compatibility, assume candidateData is the name
         candidateName = candidateData;
-        candidateDetails = '';
+        candidateMetadata = { name: candidateData };
       }
       
-      // Add candidate to blockchain with IPFS reference
-      console.log(`Adding candidate "${candidateName}" to election ${electionId}...`);
-      const result = await blockchainService.addCandidate(
-        electionId,
-        candidateName,
-        candidateDetails
-      );
+      console.log('Storing candidate details on IPFS...');
+      const ipfsCid = await ipfsService.storeCandidateDetails(candidateMetadata);
+      console.log(`Stored candidate details on IPFS with CID: ${ipfsCid}`);
+      
+      // Add to blockchain with retry mechanism
+      let attempt = 0;
+      let maxAttempts = 2;
+      let success = false;
+      let result;
+      let lastError;
+      
+      while (attempt < maxAttempts && !success) {
+        try {
+          console.log(`Attempt ${attempt + 1} to add candidate "${candidateName}" to blockchain...`);
+          result = await blockchainService.addCandidate(
+            electionId,
+            candidateName,
+            ipfsCid
+          );
+          success = true;
+        } catch (err) {
+          console.warn(`Attempt ${attempt + 1} failed:`, err);
+          lastError = err;
+          attempt++;
+          
+          if (attempt < maxAttempts) {
+            // Wait before retrying
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        }
+      }
+      
+      if (!success) {
+        throw lastError || new Error('Failed to add candidate after multiple attempts');
+      }
+      
+      console.log(`Successfully added candidate to blockchain:`, result);
       
       // Refresh elections list
       await fetchElections();
@@ -359,13 +392,9 @@ const enhanceElectionsWithIPFSData = async (elections) => {
       setIsLoading(false);
     }
   };
-
-
+  
   /**
    * Cast a vote in an election
-   * @param {number} electionId - ID of the election
-   * @param {number} candidateId - ID of the candidate
-   * @returns {Promise<Object>} Transaction result
    */
   const castVote = async (electionId, candidateId) => {
     if (!contract || !signer || !account) {
@@ -402,8 +431,6 @@ const enhanceElectionsWithIPFSData = async (elections) => {
   
   /**
    * Finalize an election
-   * @param {number} electionId - ID of the election
-   * @returns {Promise<Object>} Transaction result
    */
   const finalizeElection = async (electionId) => {
     if (!contract || !signer || !account) {
@@ -430,10 +457,33 @@ const enhanceElectionsWithIPFSData = async (elections) => {
     }
   };
   
+  /**
+   * Add an allowed voter to an election (placeholder implementation)
+   */
   const addAllowedVoter = async (electionId, voterAddress) => {
     // For now, just log the action since we don't have the actual blockchain implementation
     console.log(`Adding voter ${voterAddress} to election ${electionId}`);
-    return true; // Mock success
+    
+    // Store in local storage for testing purposes
+    try {
+      const key = `allowed_voters_${electionId}`;
+      const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
+      
+      if (!allowedVoters.includes(voterAddress)) {
+        allowedVoters.push(voterAddress);
+        localStorage.setItem(key, JSON.stringify(allowedVoters));
+      }
+      
+      // Set a special flag to identify admins for testing
+      if (voterAddress === account) {
+        localStorage.setItem('isAdmin', 'true');
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error adding allowed voter:', error);
+      return false;
+    }
   };
   
   // Fetch elections when contract or signer changes

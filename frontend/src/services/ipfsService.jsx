@@ -1,8 +1,10 @@
+// frontend/src/services/ipfsService.jsx
+
 import { create } from 'ipfs-http-client';
 
 /**
  * Service for interacting with IPFS for decentralized storage
- * With fallback to local storage when IPFS is unavailable
+ * With improved error handling and fallback mechanisms
  */
 class IPFSService {
   constructor() {
@@ -20,11 +22,7 @@ class IPFSService {
     
     // Fallback to public gateways for content retrieval
     this.gateways = [
-      'https://cloudflare-ipfs.com/ipfs/',
-      'https://ipfs.io/ipfs/',
-      'https://gateway.pinata.cloud/ipfs/',
-      'https://dweb.link/ipfs/',
-      'https://ipfs.fleek.co/ipfs/'
+      'https://gold-implicit-gayal-493.mypinata.cloud/ipfs/',
     ];
     
     // In-memory cache to prevent repeated requests
@@ -32,6 +30,13 @@ class IPFSService {
     
     // Track failed CIDs to prevent repeated failures
     this.failedCids = new Set();
+
+    // Flag to track persistent network issues
+    this.networkIssuesDetected = false;
+
+    // Counter for sequential failures
+    this.failureCounter = 0;
+    this.MAX_FAILURES = 5;
   }
 
   /**
@@ -46,8 +51,8 @@ class IPFSService {
       const projectSecret = process.env.REACT_APP_INFURA_IPFS_PROJECT_SECRET;
       
       // If we don't have credentials, return null to use mock storage
-      if (!projectId || !projectSecret) {
-        console.warn('IPFS: No credentials found, using mock storage');
+      if (!projectId || !projectSecret || projectId === "YOUR_INFURA_IPFS_PROJECT_ID") {
+        console.warn('IPFS: No valid credentials found, using mock storage');
         return null;
       }
       
@@ -112,6 +117,14 @@ class IPFSService {
   }
 
   /**
+   * Check if network issues make IPFS unusable
+   * @returns {boolean} True if network issues are detected
+   */
+  _shouldUseMockStorage() {
+    return this.usingMockStorage || this.networkIssuesDetected || this.failureCounter >= this.MAX_FAILURES;
+  }
+
+  /**
    * Upload data to IPFS or mock storage
    * @param {Object|Array|string} data - Data to upload to IPFS
    * @returns {Promise<string>} IPFS content identifier (CID)
@@ -121,36 +134,71 @@ class IPFSService {
       // Convert data to JSON string if it's an object
       const content = typeof data === 'object' ? JSON.stringify(data) : data;
       
-      // If IPFS client is available, use it
-      if (this.ipfs) {
-        try {
-          const { path } = await this.ipfs.add(content);
-          console.log('Successfully uploaded content to IPFS with CID:', path);
-          
-          // Store in cache
-          this.contentCache[path] = typeof data === 'object' ? data : content;
-          
-          return path;
-        } catch (ipfsError) {
-          console.warn('IPFS upload failed, falling back to mock storage:', ipfsError);
-          // Fall through to mock storage
-        }
+      // If we should use mock storage, skip IPFS attempt
+      if (this._shouldUseMockStorage()) {
+        return this._useMockStorage(content);
       }
       
-      // Use mock storage if IPFS is unavailable or upload failed
-      const mockCid = this._generateMockCid();
-      this.mockStorage[mockCid] = content;
-      this._saveMockStorage();
-      
-      // Store in cache
-      this.contentCache[mockCid] = typeof data === 'object' ? data : content;
-      
-      console.log('Successfully stored content in mock storage with CID:', mockCid);
-      return mockCid;
+      // Otherwise, try IPFS first
+      try {
+        const { path } = await this.ipfs.add(content);
+        console.log('Successfully uploaded content to IPFS with CID:', path);
+        
+        // Reset failure counter on success
+        this.failureCounter = 0;
+        
+        // Store in cache
+        this.contentCache[path] = typeof data === 'object' ? data : content;
+        
+        return path;
+      } catch (ipfsError) {
+        console.warn('IPFS upload failed, falling back to mock storage:', ipfsError);
+        
+        // Increment failure counter
+        this.failureCounter++;
+        
+        // If too many failures, switch to mock mode permanently for this session
+        if (this.failureCounter >= this.MAX_FAILURES) {
+          console.warn(`${this.MAX_FAILURES} sequential IPFS failures, switching to mock storage permanently`);
+          this.networkIssuesDetected = true;
+        }
+        
+        // Fall through to mock storage
+        return this._useMockStorage(content);
+      }
     } catch (error) {
       console.error('Error uploading to IPFS/mock storage:', error);
-      throw error;
+      // Still try mock storage as last resort
+      return this._useMockStorage(typeof data === 'object' ? JSON.stringify(data) : data);
     }
+  }
+  
+  /**
+   * Use mock storage as fallback
+   * @param {string} content - Content to store
+   * @returns {Promise<string>} Mock CID
+   * @private
+   */
+  _useMockStorage(content) {
+    const mockCid = this._generateMockCid();
+    this.mockStorage[mockCid] = content;
+    this._saveMockStorage();
+    
+    // Parse to object if it's JSON for cache
+    let cacheContent = content;
+    try {
+      if (typeof content === 'string' && content.trim().startsWith('{')) {
+        cacheContent = JSON.parse(content);
+      }
+    } catch (e) {
+      // Not JSON, keep as string
+    }
+    
+    // Store in cache
+    this.contentCache[mockCid] = cacheContent;
+    
+    console.log('Successfully stored content in mock storage with CID:', mockCid);
+    return mockCid;
   }
 
   /**
@@ -159,28 +207,8 @@ class IPFSService {
    * @returns {Promise<string>} IPFS content identifier (CID)
    */
   async uploadFileToIPFS(file) {
-    try {
-      // If IPFS client is available, use it
-      if (this.ipfs) {
-        try {
-          // Read file content
-          const content = await this._readFileAsBuffer(file);
-          
-          // Add file to IPFS
-          const { path } = await this.ipfs.add({
-            path: file.name,
-            content
-          });
-          
-          console.log('Successfully uploaded file to IPFS with CID:', path);
-          return path;
-        } catch (ipfsError) {
-          console.warn('IPFS file upload failed, falling back to mock storage:', ipfsError);
-          // Fall through to mock storage
-        }
-      }
-      
-      // Use mock storage if IPFS is unavailable or upload failed
+    // If we should use mock storage, skip IPFS attempt
+    if (this._shouldUseMockStorage()) {
       try {
         // Read file as text or base64
         const content = await this._readFileAsText(file);
@@ -191,15 +219,53 @@ class IPFSService {
           type: file.type
         };
         this._saveMockStorage();
-        console.log('Successfully stored file in mock storage with CID:', mockCid);
+        console.log('Stored file in mock storage with CID:', mockCid);
         return mockCid;
       } catch (mockError) {
         console.error('Error storing file in mock storage:', mockError);
         throw mockError;
       }
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      throw error;
+    }
+    
+    try {
+      // Read file content
+      const content = await this._readFileAsBuffer(file);
+      
+      // Add file to IPFS
+      const { path } = await this.ipfs.add({
+        path: file.name,
+        content
+      });
+      
+      console.log('Successfully uploaded file to IPFS with CID:', path);
+      
+      // Reset failure counter on success
+      this.failureCounter = 0;
+      
+      return path;
+    } catch (ipfsError) {
+      console.warn('IPFS file upload failed, falling back to mock storage:', ipfsError);
+      
+      // Increment failure counter
+      this.failureCounter++;
+      
+      // Fall back to mock storage
+      try {
+        // Read file as text or base64
+        const content = await this._readFileAsText(file);
+        const mockCid = this._generateMockCid();
+        this.mockStorage[mockCid] = {
+          filename: file.name,
+          content: content,
+          type: file.type
+        };
+        this._saveMockStorage();
+        console.log('Stored file in mock storage with CID:', mockCid);
+        return mockCid;
+      } catch (mockError) {
+        console.error('Error storing file in mock storage:', mockError);
+        throw mockError;
+      }
     }
   }
 
@@ -247,7 +313,7 @@ class IPFSService {
     // If CID is not valid, return empty object instead of failing
     if (!cid || typeof cid !== 'string' || cid.trim() === '') {
       console.warn('Invalid or empty CID provided:', cid);
-      return {}; // Return empty object as fallback
+      return this._createMockCandidate(cid); // Return mock data
     }
     
     // Check cache first for quick response
@@ -257,45 +323,43 @@ class IPFSService {
     
     // If this CID has failed before, don't try again (reduces errors in browser console)
     if (this.failedCids.has(cid)) {
-      return {
-        name: "Candidate", 
-        bio: "Candidate information unavailable (cached error)", 
-        platform: "",
-        _ipfsError: true,
-        _errorCached: true,
-        _requestedCid: cid
-      };
+      return this._createMockCandidate(cid, true);
+    }
+    
+    // Check mock storage first since it's fastest
+    if (this.mockStorage[cid]) {
+      console.log(`Found content in mock storage for CID: ${cid}`);
+      const content = this.mockStorage[cid];
+      
+      // If it's a JSON string, parse it
+      if (typeof content === 'string') {
+        try {
+          const parsed = JSON.parse(content);
+          this.contentCache[cid] = parsed; // Cache it
+          return parsed;
+        } catch (parseError) {
+          // Return as plain text if not valid JSON
+          this.contentCache[cid] = content; // Cache it
+          return content;
+        }
+      }
+      
+      this.contentCache[cid] = content; // Cache it
+      return content;
+    }
+    
+    // If we should use mock storage entirely, skip IPFS attempts
+    if (this._shouldUseMockStorage()) {
+      return this._createMockCandidate(cid);
     }
     
     try {
       console.log(`Attempting to get content from IPFS: ${cid}`);
       
-      // Check mock storage first
-      if (this.mockStorage[cid]) {
-        console.log(`Found content in mock storage for CID: ${cid}`);
-        const content = this.mockStorage[cid];
-        
-        // If it's a JSON string, parse it
-        if (typeof content === 'string') {
-          try {
-            const parsed = JSON.parse(content);
-            this.contentCache[cid] = parsed; // Cache it
-            return parsed;
-          } catch (parseError) {
-            // Return as plain text if not valid JSON
-            this.contentCache[cid] = content; // Cache it
-            return content;
-          }
-        }
-        
-        this.contentCache[cid] = content; // Cache it
-        return content;
-      }
-      
-      // If not in mock storage and IPFS client is available, try direct IPFS
+      // If IPFS client is available, try direct IPFS
       if (this.ipfs) {
         try {
-          console.log(`Attempting to fetch from IPFS node: ${cid}`);
+          console.log(`Fetching from IPFS node: ${cid}`);
           const stream = this.ipfs.cat(cid);
           let data = '';
           
@@ -304,6 +368,9 @@ class IPFSService {
           }
           
           console.log(`Successfully retrieved data from IPFS node: ${cid}`);
+          
+          // Reset failure counter on success
+          this.failureCounter = 0;
           
           // Try to parse as JSON if possible
           try {
@@ -327,24 +394,50 @@ class IPFSService {
     } catch (error) {
       console.error(`Error in getFromIPFS: ${error.message}`);
       
+      // Increment failure counter
+      this.failureCounter++;
+      
+      // Check if we should switch to mock mode permanently
+      if (this.failureCounter >= this.MAX_FAILURES) {
+        console.warn(`${this.MAX_FAILURES} sequential IPFS failures, switching to mock storage permanently`);
+        this.networkIssuesDetected = true;
+      }
+      
       // Mark this CID as failed to prevent repeated attempts
       this.failedCids.add(cid);
       
-      // Return a fallback object instead of throwing
-      const fallback = {
-        name: "Candidate", 
-        bio: "Candidate information unavailable", 
-        platform: "",
-        _ipfsError: true,
-        _errorMessage: error.message,
-        _requestedCid: cid
-      };
-      
-      // Cache the fallback to prevent repeated failures
-      this.contentCache[cid] = fallback;
-      
-      return fallback;
+      // Return a mock data object instead of throwing
+      return this._createMockCandidate(cid);
     }
+  }
+
+  /**
+   * Create a mock candidate when IPFS fails
+   * @param {string} cid - The requested CID
+   * @param {boolean} cached - Whether this is from cache 
+   * @returns {Object} A mock candidate object
+   * @private
+   */
+  _createMockCandidate(cid, cached = false) {
+    // Create ID from CID hash 
+    const idFromCid = cid ? cid.substring(0, 6) : Math.floor(Math.random() * 1000);
+    
+    const mockCandidate = {
+      name: `Candidate #${idFromCid}`,
+      bio: "This candidate information couldn't be retrieved from IPFS",
+      platform: "Placeholder platform",
+      _ipfsError: true,
+      _mockData: true,
+      _requestedCid: cid,
+      _cached: cached
+    };
+    
+    // Cache the mock data
+    if (cid) {
+      this.contentCache[cid] = mockCandidate;
+    }
+    
+    return mockCandidate;
   }
 
   /**
@@ -396,6 +489,9 @@ class IPFSService {
         
         // Cache the successful result
         this.contentCache[cid] = data;
+        
+        // Reset failure counter on success
+        this.failureCounter = 0;
         
         return { success: true, data };
       } catch (error) {
@@ -452,20 +548,11 @@ class IPFSService {
     // Mark this CID as failed to prevent future attempts
     this.failedCids.add(cid);
     
-    // Return a fallback object
-    const fallback = {
-      name: "Candidate", 
-      bio: "Candidate information unavailable (all gateways failed)",
-      platform: "",
-      _ipfsError: true,
-      _allGatewaysFailed: true,
-      _requestedCid: cid
-    };
+    // Increment failure counter
+    this.failureCounter++;
     
-    // Cache the fallback
-    this.contentCache[cid] = fallback;
-    
-    return fallback;
+    // Return a mock candidate
+    return this._createMockCandidate(cid);
   }
 
   /**
@@ -485,10 +572,10 @@ class IPFSService {
    */
   async storeElectionDetails(electionDetails) {
     const data = {
-      title: electionDetails.title,
-      description: electionDetails.description,
-      rules: electionDetails.rules,
-      additionalInfo: electionDetails.additionalInfo,
+      title: electionDetails.title || 'Untitled Election',
+      description: electionDetails.description || '',
+      rules: electionDetails.rules || '',
+      additionalInfo: electionDetails.additionalInfo || '',
       createdAt: new Date().toISOString()
     };
     
@@ -502,11 +589,10 @@ class IPFSService {
    */
   async storeCandidateDetails(candidateDetails) {
     const data = {
-      name: candidateDetails.name,
-      bio: candidateDetails.bio,
-      platform: candidateDetails.platform,
-      photoUrl: candidateDetails.photoUrl, // This would be a URL or another IPFS hash
-      additionalInfo: candidateDetails.additionalInfo,
+      name: candidateDetails.name || 'Candidate',
+      bio: candidateDetails.bio || '',
+      platform: candidateDetails.platform || '',
+      photoUrl: candidateDetails.photoUrl || '',
       createdAt: new Date().toISOString()
     };
     
@@ -518,7 +604,7 @@ class IPFSService {
    * @returns {boolean} Whether mock storage is being used
    */
   isUsingMockStorage() {
-    return this.usingMockStorage;
+    return this.usingMockStorage || this.networkIssuesDetected;
   }
 
   /**
@@ -527,6 +613,8 @@ class IPFSService {
   clearCache() {
     this.contentCache = {};
     this.failedCids.clear();
+    this.failureCounter = 0;
+    this.networkIssuesDetected = false;
     console.log("IPFS content cache cleared");
   }
 }

@@ -1,9 +1,11 @@
 import React from 'react';
-import { Check } from 'lucide-react';
+import { Check, User } from 'lucide-react';
 import { formatPercentage } from '../../utils/formatters';
+import FallbackCandidate from './FallbackCandidate';
 
 /**
- * Candidate card component for displaying candidate information
+ * Enhanced Candidate card component for displaying candidate information
+ * With improved error handling and fallback display
  * 
  * @param {Object} candidate - Candidate data
  * @param {boolean} isSelected - Whether the candidate is selected
@@ -12,6 +14,8 @@ import { formatPercentage } from '../../utils/formatters';
  * @param {boolean} isWinner - Whether the candidate is the winner
  * @param {function} onSelect - Function to call when candidate is selected
  * @param {string} className - Additional CSS classes
+ * @param {function} onRetrySuccess - Function to call when IPFS data is successfully retrieved
+ * @param {number} electionId - ID of the election
  */
 const CandidateCard = ({
   candidate,
@@ -20,10 +24,36 @@ const CandidateCard = ({
   totalVotes = 0,
   isWinner = false,
   onSelect,
-  className = ''
+  className = '',
+  onRetrySuccess,
+  electionId
 }) => {
   if (!candidate) return null;
   
+  // Check if this candidate needs the fallback component
+  const needsFallback = 
+    candidate._placeholder || 
+    candidate._ipfsError || 
+    candidate._error || 
+    !candidate.name;
+  
+  // If needs fallback, use the FallbackCandidate component
+  if (needsFallback) {
+    return (
+      <FallbackCandidate
+        candidate={candidate}
+        isSelected={isSelected}
+        showVotes={showVotes}
+        totalVotes={totalVotes}
+        onSelect={onSelect}
+        className={className}
+        onRetrySuccess={onRetrySuccess}
+        electionId={electionId}
+      />
+    );
+  }
+  
+  // Regular candidate display for when we have all the data
   const {
     id,
     name,
@@ -59,13 +89,17 @@ const CandidateCard = ({
       <div className="p-5">
         <div className="flex items-start">
           {/* Candidate Photo */}
-          {photoUrl && (
+          {photoUrl ? (
             <div className="flex-shrink-0 mr-4">
               <img 
                 src={photoUrl} 
                 alt={name} 
                 className="w-16 h-16 rounded-full object-cover"
               />
+            </div>
+          ) : (
+            <div className="flex-shrink-0 mr-4 bg-gray-100 rounded-full w-16 h-16 flex items-center justify-center">
+              <User size={24} className="text-gray-400" />
             </div>
           )}
           

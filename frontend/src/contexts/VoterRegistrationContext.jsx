@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useWeb3 } from './Web3Context';
 import IPFSRegistrationService from '../services/ipfsRegistrationService';
 
@@ -17,18 +17,22 @@ export const VoterRegistrationProvider = ({ children }) => {
   const [error, setError] = useState(null);
   
   // Initialize IPFS service
-  const ipfsService = new IPFSRegistrationService();
+  const ipfsService = useRef(new IPFSRegistrationService()).current;
+  
+  // Track if we already ran initial load for this account to prevent infinite loop
+  const initialLoadRef = useRef({});
 
   // Load voter registrations from IPFS
-  const loadRegistrations = useCallback(async () => {
+  const loadRegistrations = useCallback(async (forceRefresh = false) => {
     try {
-      setIsLoading(true);
-      setError(null);
-
-      if (!account) {
-        setRegisteredElections([]);
+      // Skip if already loading or if we've already loaded for this account
+      // and it's not a forced refresh
+      if (!account || (initialLoadRef.current[account] && !forceRefresh)) {
         return;
       }
+
+      setIsLoading(true);
+      setError(null);
 
       // Get user registrations from local references
       const userRefsKey = `user_registrations_${account}`;
@@ -53,6 +57,9 @@ export const VoterRegistrationProvider = ({ children }) => {
       }
       
       setRegisteredElections(electionIds);
+      
+      // Mark this account as loaded
+      initialLoadRef.current[account] = true;
     } catch (err) {
       console.error('Error loading voter registrations:', err);
       setError('Failed to load registration data. Please try again.');
@@ -66,8 +73,8 @@ export const VoterRegistrationProvider = ({ children }) => {
     if (!electionId) return false;
     
     // Convert both to strings for comparison
-    const targetId = electionId.toString();
-    return registeredElections.some(id => id.toString() === targetId);
+    const targetId = String(electionId);
+    return registeredElections.some(id => String(id) === targetId);
   }, [registeredElections]);
 
   // Register a user for an election (test function)
@@ -88,8 +95,8 @@ export const VoterRegistrationProvider = ({ children }) => {
       // Store on IPFS
       await ipfsService.storeRegistration(registration);
       
-      // Reload registrations
-      await loadRegistrations();
+      // Reload registrations with force refresh
+      await loadRegistrations(true);
       
       return true;
     } catch (err) {
@@ -110,9 +117,11 @@ export const VoterRegistrationProvider = ({ children }) => {
     }
   }, [account, ipfsService]);
 
-  // Load registrations when component mounts or account changes
+  // Load registrations when account changes, but only once per account
   useEffect(() => {
-    loadRegistrations();
+    if (account && !initialLoadRef.current[account]) {
+      loadRegistrations();
+    }
   }, [account, loadRegistrations]);
 
   const value = {
@@ -120,7 +129,7 @@ export const VoterRegistrationProvider = ({ children }) => {
     isRegisteredForElection,
     registerForElection,
     getRegistrationStatus,
-    refreshRegistrations: loadRegistrations,
+    refreshRegistrations: (force) => loadRegistrations(force),
     isLoading,
     error
   };
