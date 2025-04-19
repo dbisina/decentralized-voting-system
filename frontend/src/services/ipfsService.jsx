@@ -1,18 +1,23 @@
 // frontend/src/services/ipfsService.jsx
-
-import { create } from 'ipfs-http-client';
+import axios from 'axios';
 
 /**
- * Service for interacting with IPFS for decentralized storage
+ * Service for interacting with IPFS via Pinata for decentralized storage
  * With improved error handling and fallback mechanisms
  */
 class IPFSService {
   constructor() {
-    // Try to configure IPFS client
-    this.ipfs = this._createIPFSClient();
+    // Pinata API credentials
+    this.apiKey = process.env.REACT_APP_PINATA_API_KEY || '';
+    this.apiSecret = process.env.REACT_APP_PINATA_API_SECRET || '';
+    this.baseURL = 'https://api.pinata.cloud';
     
     // Flag to track if we're using mock storage
-    this.usingMockStorage = !this.ipfs;
+    this.usingMockStorage = !this.apiKey || !this.apiSecret || this.apiKey === "YOUR_PINATA_API_KEY";
+    
+    if (this.usingMockStorage) {
+      console.warn('IPFS: No valid Pinata credentials found, using mock storage');
+    }
     
     // Mock storage for fallback (using localStorage)
     this.mockStorage = {};
@@ -23,6 +28,8 @@ class IPFSService {
     // Fallback to public gateways for content retrieval
     this.gateways = [
       'https://gold-implicit-gayal-493.mypinata.cloud/ipfs/',
+      'https://cloudflare-ipfs.com/ipfs/',
+      'https://ipfs.io/ipfs/'
     ];
     
     // In-memory cache to prevent repeated requests
@@ -37,40 +44,6 @@ class IPFSService {
     // Counter for sequential failures
     this.failureCounter = 0;
     this.MAX_FAILURES = 5;
-  }
-
-  /**
-   * Create the IPFS client
-   * @returns {Object|null} IPFS client instance or null if creation fails
-   * @private
-   */
-  _createIPFSClient() {
-    try {
-      // Check for environment variables
-      const projectId = process.env.REACT_APP_INFURA_IPFS_PROJECT_ID;
-      const projectSecret = process.env.REACT_APP_INFURA_IPFS_PROJECT_SECRET;
-      
-      // If we don't have credentials, return null to use mock storage
-      if (!projectId || !projectSecret || projectId === "YOUR_INFURA_IPFS_PROJECT_ID") {
-        console.warn('IPFS: No valid credentials found, using mock storage');
-        return null;
-      }
-      
-      // Create auth header
-      const auth = 'Basic ' + Buffer.from(projectId + ':' + projectSecret).toString('base64');
-      
-      return create({
-        host: 'ipfs.infura.io',
-        port: 5001,
-        protocol: 'https',
-        headers: {
-          authorization: auth,
-        },
-      });
-    } catch (error) {
-      console.warn('Error creating IPFS client, using mock storage:', error);
-      return null;
-    }
   }
   
   /**
@@ -125,7 +98,7 @@ class IPFSService {
   }
 
   /**
-   * Upload data to IPFS or mock storage
+   * Upload data to IPFS via Pinata or mock storage
    * @param {Object|Array|string} data - Data to upload to IPFS
    * @returns {Promise<string>} IPFS content identifier (CID)
    */
@@ -134,32 +107,50 @@ class IPFSService {
       // Convert data to JSON string if it's an object
       const content = typeof data === 'object' ? JSON.stringify(data) : data;
       
-      // If we should use mock storage, skip IPFS attempt
+      // If we should use mock storage, skip Pinata attempt
       if (this._shouldUseMockStorage()) {
         return this._useMockStorage(content);
       }
       
-      // Otherwise, try IPFS first
+      // Otherwise, try Pinata
       try {
-        const { path } = await this.ipfs.add(content);
-        console.log('Successfully uploaded content to IPFS with CID:', path);
+        console.log('Uploading to Pinata...');
+        const response = await axios.post(
+          `${this.baseURL}/pinning/pinJSONToIPFS`,
+          {
+            pinataContent: typeof data === 'object' ? data : { content: data },
+            pinataMetadata: {
+              name: `ipfs-data-${Date.now()}`
+            }
+          },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              pinata_api_key: this.apiKey,
+              pinata_secret_api_key: this.apiSecret
+            }
+          }
+        );
+        
+        const ipfsHash = response.data.IpfsHash;
+        console.log('Successfully uploaded content to Pinata with CID:', ipfsHash);
         
         // Reset failure counter on success
         this.failureCounter = 0;
         
         // Store in cache
-        this.contentCache[path] = typeof data === 'object' ? data : content;
+        this.contentCache[ipfsHash] = typeof data === 'object' ? data : content;
         
-        return path;
-      } catch (ipfsError) {
-        console.warn('IPFS upload failed, falling back to mock storage:', ipfsError);
+        return ipfsHash;
+      } catch (pinataError) {
+        console.warn('Pinata upload failed, falling back to mock storage:', pinataError);
         
         // Increment failure counter
         this.failureCounter++;
         
         // If too many failures, switch to mock mode permanently for this session
         if (this.failureCounter >= this.MAX_FAILURES) {
-          console.warn(`${this.MAX_FAILURES} sequential IPFS failures, switching to mock storage permanently`);
+          console.warn(`${this.MAX_FAILURES} sequential Pinata failures, switching to mock storage permanently`);
           this.networkIssuesDetected = true;
         }
         
@@ -167,7 +158,7 @@ class IPFSService {
         return this._useMockStorage(content);
       }
     } catch (error) {
-      console.error('Error uploading to IPFS/mock storage:', error);
+      console.error('Error uploading to Pinata/mock storage:', error);
       // Still try mock storage as last resort
       return this._useMockStorage(typeof data === 'object' ? JSON.stringify(data) : data);
     }
@@ -202,12 +193,12 @@ class IPFSService {
   }
 
   /**
-   * Upload a file to IPFS or mock storage
+   * Upload a file to IPFS via Pinata or mock storage
    * @param {File} file - File object to upload
    * @returns {Promise<string>} IPFS content identifier (CID)
    */
   async uploadFileToIPFS(file) {
-    // If we should use mock storage, skip IPFS attempt
+    // If we should use mock storage, skip Pinata attempt
     if (this._shouldUseMockStorage()) {
       try {
         // Read file as text or base64
@@ -228,23 +219,39 @@ class IPFSService {
     }
     
     try {
-      // Read file content
-      const content = await this._readFileAsBuffer(file);
+      // Create a form data object
+      const formData = new FormData();
+      formData.append('file', file);
       
-      // Add file to IPFS
-      const { path } = await this.ipfs.add({
-        path: file.name,
-        content
+      // Add the Pinata metadata
+      const metadata = JSON.stringify({
+        name: file.name,
       });
+      formData.append('pinataMetadata', metadata);
       
-      console.log('Successfully uploaded file to IPFS with CID:', path);
+      // Make the request to Pinata
+      const response = await axios.post(
+        `${this.baseURL}/pinning/pinFileToIPFS`,
+        formData,
+        {
+          maxBodyLength: Infinity,
+          headers: {
+            'Content-Type': `multipart/form-data; boundary=${formData._boundary}`,
+            pinata_api_key: this.apiKey,
+            pinata_secret_api_key: this.apiSecret
+          }
+        }
+      );
+      
+      const ipfsHash = response.data.IpfsHash;
+      console.log('Successfully uploaded file to Pinata with CID:', ipfsHash);
       
       // Reset failure counter on success
       this.failureCounter = 0;
       
-      return path;
-    } catch (ipfsError) {
-      console.warn('IPFS file upload failed, falling back to mock storage:', ipfsError);
+      return ipfsHash;
+    } catch (pinataError) {
+      console.warn('Pinata file upload failed, falling back to mock storage:', pinataError);
       
       // Increment failure counter
       this.failureCounter++;
@@ -305,7 +312,7 @@ class IPFSService {
   }
 
   /**
-   * Get content from IPFS or mock storage - improved version with better error handling
+   * Get content from IPFS via Pinata gateway or mock storage
    * @param {string} cid - IPFS content identifier
    * @returns {Promise<Object|string>} Retrieved content
    */
@@ -348,47 +355,51 @@ class IPFSService {
       return content;
     }
     
-    // If we should use mock storage entirely, skip IPFS attempts
+    // If we should use mock storage entirely, skip Pinata attempts
     if (this._shouldUseMockStorage()) {
       return this._createMockCandidate(cid);
     }
     
     try {
-      console.log(`Attempting to get content from IPFS: ${cid}`);
+      console.log(`Attempting to get content from Pinata gateway: ${cid}`);
       
-      // If IPFS client is available, try direct IPFS
-      if (this.ipfs) {
-        try {
-          console.log(`Fetching from IPFS node: ${cid}`);
-          const stream = this.ipfs.cat(cid);
-          let data = '';
+      // Try to get directly from Pinata via their gateway
+      try {
+        // First try Pinata's gateway
+        const gatewayResponse = await fetch(`${this.gateways[0]}${cid}`);
+        
+        if (gatewayResponse.ok) {
+          // Try to determine content type
+          const contentType = gatewayResponse.headers.get('content-type');
           
-          for await (const chunk of stream) {
-            data += new TextDecoder().decode(chunk);
+          let data;
+          if (contentType && contentType.includes('application/json')) {
+            data = await gatewayResponse.json();
+          } else {
+            const text = await gatewayResponse.text();
+            // Try to parse as JSON even if content type doesn't indicate it
+            try {
+              data = JSON.parse(text);
+            } catch {
+              data = text;
+            }
           }
           
-          console.log(`Successfully retrieved data from IPFS node: ${cid}`);
+          console.log(`Successfully retrieved data from Pinata gateway`);
+          
+          // Cache the result
+          this.contentCache[cid] = data;
           
           // Reset failure counter on success
           this.failureCounter = 0;
           
-          // Try to parse as JSON if possible
-          try {
-            const parsed = JSON.parse(data);
-            this.contentCache[cid] = parsed; // Cache it
-            return parsed;
-          } catch (parseError) {
-            // Return as plain text if not valid JSON
-            this.contentCache[cid] = data; // Cache it
-            return data;
-          }
-        } catch (ipfsError) {
-          console.warn(`Error fetching from IPFS node: ${ipfsError.message}`);
-          // Continue to gateway fallback
+          return data;
         }
+      } catch (gatewayError) {
+        console.warn(`Error fetching from Pinata gateway:`, gatewayError.message);
       }
       
-      // Try gateway fetch with better error handling
+      // If direct gateway fetch failed, try gateway fallbacks
       return await this._fetchFromGatewayWithFallback(cid);
       
     } catch (error) {
@@ -514,7 +525,7 @@ class IPFSService {
     // Try a CORS proxy as a last resort (if in development)
     if (process.env.NODE_ENV === 'development') {
       try {
-        // Public CORS proxy (https://cors-anywhere.herokuapp.com/) or custom proxy
+        // Public CORS proxy 
         const proxyUrl = 'https://corsproxy.io/?';
         const response = await fetch(`${proxyUrl}${this.gateways[0]}${cid}`);
         
@@ -566,7 +577,7 @@ class IPFSService {
   }
 
   /**
-   * Store election details on IPFS or mock storage
+   * Store election details on IPFS via Pinata
    * @param {Object} electionDetails - Election details
    * @returns {Promise<string>} IPFS CID
    */
@@ -583,7 +594,7 @@ class IPFSService {
   }
 
   /**
-   * Store candidate details on IPFS or mock storage
+   * Store candidate details on IPFS via Pinata
    * @param {Object} candidateDetails - Candidate details
    * @returns {Promise<string>} IPFS CID
    */

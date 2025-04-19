@@ -30,7 +30,7 @@ const VoterRegistrationManagementPage = () => {
     const [registrationLink, setRegistrationLink] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
     const [processingIds, setProcessingIds] = useState(new Set());
-    const [viewOption, setViewOption] = useState('all'); // 'all', 'pending', 'approved', 'rejected'
+    const [viewOption, setViewOption] = useState('pending'); // 'all', 'pending', 'approved', 'rejected'
     
     // Generate a registration code if none exists
     useEffect(() => {
@@ -132,13 +132,22 @@ const VoterRegistrationManagementPage = () => {
             // Add to processing set
             setProcessingIds(prev => new Set([...prev, registration.walletAddress]));
             
-            // Update registration status in IPFS
+            // Update registration status in IPFS via Pinata
             await ipfsService.updateRegistrationStatus(registration, 'approved');
             
-            // Add the voter's wallet address to the allowed voters list on the blockchain
-            await addAllowedVoter(electionId, registration.walletAddress);
+            // THIS IS THE CRITICAL PART - Add the voter to the blockchain
+            const blockchainSuccess = await addAllowedVoter(electionId, registration.walletAddress);
             
-            // Update local state
+            if (!blockchainSuccess) {
+                // If blockchain registration fails, show warning but continue
+                console.warn(`Blockchain registration failed for ${registration.walletAddress}`);
+                setStatusMessage({
+                    type: 'warning',
+                    message: `Approved ${registration.fullName}'s registration but blockchain registration may have failed. They might not be able to vote.`
+                });
+            }
+            
+            // Update local state for UI
             setRegistrations(prev => 
                 prev.map(r => 
                     r.walletAddress === registration.walletAddress 

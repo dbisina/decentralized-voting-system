@@ -4,10 +4,7 @@ import VotingSystemABI from '../contracts/DecentralizedVotingSystem.json';
 
 // Contract addresses for different networks
 const CONTRACT_ADDRESSES = {
-  1: '', // Ethereum Mainnet (not deployed)
-  5: '0x3B9f743B648aF8a8e31f542935D5a56d5E4d5E4', // Goerli Testnet
-  80001: '0x2C78f1b70Ccf63CDEe49F9233e9fAa99D43AA07e', // Mumbai Testnet
-  1337: '0x01b6335276db93afad1b8bbeae1a661ac7f5512b' // Local development
+  1337: '0x992fbe5f03b8f4448de26f7a6206042b8d1fc467' // Local development
 };
 
 // The default network ID for development

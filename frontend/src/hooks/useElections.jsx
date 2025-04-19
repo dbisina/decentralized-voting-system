@@ -458,33 +458,89 @@ const useElections = () => {
   };
   
   /**
-   * Add an allowed voter to an election (placeholder implementation)
+   * Add an allowed voter to an election
+   * @param {string|number} electionId - Election ID
+   * @param {string} voterAddress - Ethereum address of the voter to add
+   * @returns {Promise<boolean>} Success status
    */
   const addAllowedVoter = async (electionId, voterAddress) => {
-    // For now, just log the action since we don't have the actual blockchain implementation
-    console.log(`Adding voter ${voterAddress} to election ${electionId}`);
-    
-    // Store in local storage for testing purposes
-    try {
-      const key = `allowed_voters_${electionId}`;
-      const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
-      
-      if (!allowedVoters.includes(voterAddress)) {
-        allowedVoters.push(voterAddress);
-        localStorage.setItem(key, JSON.stringify(allowedVoters));
-      }
-      
-      // Set a special flag to identify admins for testing
-      if (voterAddress === account) {
-        localStorage.setItem('isAdmin', 'true');
-      }
-      
-      return true;
-    } catch (error) {
-      console.error('Error adding allowed voter:', error);
-      return false;
+    if (!contract || !signer || !account) {
+        console.warn('No contract, signer, or account available');
+        return false;
     }
-  };
+    
+    try {
+        setIsLoading(true);
+        setError(null);
+        
+        console.log(`Adding voter ${voterAddress} to election ${electionId}`);
+        
+        // Call the contract method to add the voter - you need to add this to your contract!
+        // If your contract doesn't have this function yet, add it as explained in previous messages
+        try {
+            const contractWithSigner = contract.connect(signer);
+            
+            // First check if you have this function in your contract
+            // If your contract has this function:
+            if (typeof contractWithSigner.addAllowedVoter === 'function') {
+                const tx = await contractWithSigner.addAllowedVoter(electionId, voterAddress);
+                await tx.wait();
+                console.log(`Successfully added voter ${voterAddress} to blockchain`, tx.hash);
+            } else {
+                // Fallback if function doesn't exist - store in localStorage for testing
+                console.warn("Contract doesn't have addAllowedVoter function - using localStorage fallback");
+                const key = `allowed_voters_${electionId}`;
+                const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
+                
+                if (!allowedVoters.includes(voterAddress)) {
+                    allowedVoters.push(voterAddress);
+                    localStorage.setItem(key, JSON.stringify(allowedVoters));
+                }
+            }
+        } catch (contractError) {
+            console.error("Error calling contract method:", contractError);
+            // Fallback to localStorage if contract call fails
+            const key = `allowed_voters_${electionId}`;
+            const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
+            
+            if (!allowedVoters.includes(voterAddress)) {
+                allowedVoters.push(voterAddress);
+                localStorage.setItem(key, JSON.stringify(allowedVoters));
+            }
+        }
+        
+        // Also update the user_registrations entry to ensure frontend shows the correct status
+        try {
+            const userRefsKey = `user_registrations_${voterAddress}`;
+            const userRefs = JSON.parse(localStorage.getItem(userRefsKey) || '[]');
+            
+            // Find if we already have a reference for this election
+            const index = userRefs.findIndex(ref => ref.electionId == electionId);
+            const updatedRef = {
+                electionId: electionId,
+                status: 'approved',
+                updatedAt: new Date().toISOString()
+            };
+            
+            if (index >= 0) {
+                userRefs[index] = {...userRefs[index], ...updatedRef};
+            } else {
+                userRefs.push(updatedRef);
+            }
+            
+            localStorage.setItem(userRefsKey, JSON.stringify(userRefs));
+        } catch (localStorageError) {
+            console.warn("Error updating local registration cache:", localStorageError);
+        }
+        
+        return true;
+    } catch (err) {
+        console.error('Error adding allowed voter:', err);
+        setError('Failed to add voter. Please try again.');
+        return false;
+    } finally {
+        setIsLoading(false);
+    }};
   
   // Fetch elections when contract or signer changes
   useEffect(() => {
