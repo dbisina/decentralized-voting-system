@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Edit, Trash2, Users, Calendar, Clock, ChevronDown, Info, ExternalLink, AlertCircle, UserPlus } from 'lucide-react';
+import { Plus, Edit, Trash2, Users, Calendar, Shield, ChevronDown, Info, ExternalLink, AlertCircle, UserPlus } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
@@ -343,13 +343,24 @@ const ElectionManagement = () => {
                           </Button>
                                                   
                           <Button
+                            variant="primary"
+                            size="sm"
+                            onClick={() => navigate(`/enhanced-voter-management/${election.id.toString()}`)}
+                            className="ml-2 flex items-center"
+                          >
+                            <Shield size={16} className="mr-1" />
+                            Enhanced Access Control
+                          </Button>
+
+                
+                          <Button
                             variant="secondary"
                             size="sm"
                             onClick={() => navigate(`/manage-registrations/${election.id.toString()}`)}
-                            className="ml-2"
+                            className="ml-2 flex items-center"
                           >
                             <Users size={16} className="mr-1" />
-                            Manage Voters
+                            Basic Voter Management
                           </Button>
                         </>
                       )}

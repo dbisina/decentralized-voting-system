@@ -15,7 +15,18 @@ export const VoterRegistrationProvider = ({ children }) => {
   const [registeredElections, setRegisteredElections] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [universalAccess, setUniversalAccess] = useState(process.env.NODE_ENV === 'development');
+  const [universalAccess, setUniversalAccess] = useState(() => {
+    // Check localStorage first
+    const savedMode = localStorage.getItem('universalAccessMode');
+    if (savedMode !== null) {
+      return savedMode === 'true';
+    }
+    // Default to development mode
+    return process.env.NODE_ENV === 'development';
+  });
+  
+  // Track different voter statuses per election
+  const [voterStatuses, setVoterStatuses] = useState({});
   
   // Initialize IPFS service
   const ipfsService = useRef(new IPFSRegistrationService()).current;
@@ -35,7 +46,7 @@ export const VoterRegistrationProvider = ({ children }) => {
       setIsLoading(true);
       setError(null);
 
-      // In development mode, treat all elections as registered
+      // In development mode, treat all elections as registered if universal access is on
       if (universalAccess) {
         console.log("DEV MODE: Universal election access enabled");
         
@@ -65,15 +76,24 @@ export const VoterRegistrationProvider = ({ children }) => {
       
       // Initialize with empty array
       const electionIds = [];
+      const statuses = {};
       
       // Add all elections with approved status or any status in dev mode
       for (const ref of userRefs) {
         try {
+          // Store status for this election
+          statuses[ref.electionId] = ref.status || 'pending';
+          
           if (ref.status === 'approved' || universalAccess) {
             electionIds.push(ref.electionId);
           } else {
             // Get the full registration data from the hash
             const registration = await ipfsService.getRegistration(ref.ipfsHash);
+            
+            // Update status if available
+            if (registration && registration.status) {
+              statuses[ref.electionId] = registration.status;
+            }
             
             // Only add to list if approved or in dev mode
             if (registration && (registration.status === 'approved' || universalAccess)) {
@@ -86,6 +106,7 @@ export const VoterRegistrationProvider = ({ children }) => {
       }
       
       setRegisteredElections(electionIds);
+      setVoterStatuses(statuses);
       
       // Mark this account as loaded
       initialLoadRef.current[account] = true;
@@ -113,11 +134,58 @@ export const VoterRegistrationProvider = ({ children }) => {
 
   // Toggle universal access (for development)
   const toggleUniversalAccess = useCallback(() => {
-    setUniversalAccess(prev => !prev);
-    // Re-run registration loading with the new setting
+    setUniversalAccess(prev => {
+      const newValue = !prev;
+      // Save to localStorage
+      localStorage.setItem('universalAccessMode', newValue.toString());
+      return newValue;
+    });
     initialLoadRef.current = {};
     loadRegistrations(true);
   }, [loadRegistrations]);
+
+  
+  // Get status for a specific election
+  const getVoterStatusForElection = useCallback((electionId) => {
+    if (universalAccess) return 'approved';
+    return voterStatuses[electionId] || 'none';
+  }, [voterStatuses, universalAccess]);
+
+  // Get all registration statuses
+  const getAllVoterStatuses = useCallback(() => {
+    if (universalAccess) {
+      // Return approved for all registrations if in universal access mode
+      return voterStatuses;
+    }
+    return voterStatuses;
+  }, [voterStatuses, universalAccess]);
+
+  // Check registration status
+  const getRegistrationStatus = useCallback(async (electionId) => {
+    // In development mode with universal access, always return 'approved'
+    if (universalAccess) {
+      return 'approved';
+    }
+    
+    if (!account || !electionId) return null;
+    
+    try {
+      const status = await ipfsService.getUserRegistrationStatus(account, electionId);
+      
+      // Update the status in state if we get a result
+      if (status) {
+        setVoterStatuses(prev => ({
+          ...prev,
+          [electionId]: status
+        }));
+      }
+      
+      return status;
+    } catch (err) {
+      console.error('Error getting registration status:', err);
+      return null;
+    }
+  }, [account, ipfsService, universalAccess]);
 
   // Register a user for an election (with optional bypass)
   const registerForElection = useCallback(async (electionId, status = 'approved') => {
@@ -159,6 +227,20 @@ export const VoterRegistrationProvider = ({ children }) => {
         }
       }
       
+      // Update local state
+      setVoterStatuses(prev => ({
+        ...prev,
+        [electionId]: status
+      }));
+      
+      // If approved, add to registered elections
+      if (status === 'approved') {
+        setRegisteredElections(prev => {
+          if (prev.includes(electionId)) return prev;
+          return [...prev, electionId];
+        });
+      }
+      
       // Reload registrations with force refresh
       await loadRegistrations(true);
       
@@ -168,36 +250,6 @@ export const VoterRegistrationProvider = ({ children }) => {
       return false;
     }
   }, [account, ipfsService, loadRegistrations, contract, signer]);
-
-  // Check registration status
-  const getRegistrationStatus = useCallback(async (electionId) => {
-    // In development mode with universal access, always return 'approved'
-    if (universalAccess) {
-      return 'approved';
-    }
-    
-    if (!account || !electionId) return null;
-    
-    try {
-      return await ipfsService.getUserRegistrationStatus(account, electionId);
-    } catch (err) {
-      console.error('Error getting registration status:', err);
-      return null;
-    }
-  }, [account, ipfsService, universalAccess]);
-
-  // Load registrations when account changes, but only once per account
-  useEffect(() => {
-    if (account && (!initialLoadRef.current[account] || universalAccess)) {
-      loadRegistrations();
-    }
-    
-    // Clear registrations when account changes
-    if (!account) {
-      setRegisteredElections([]);
-      initialLoadRef.current = {};
-    }
-  }, [account, loadRegistrations, universalAccess]);
 
   // Function to add an allowed voter directly to the blockchain
   const addAllowedVoter = useCallback(async (electionId, voterAddress) => {
@@ -286,13 +338,59 @@ export const VoterRegistrationProvider = ({ children }) => {
     }
   }, [contract, signer, ipfsService]);
 
+  // Reject a voter registration
+  const rejectVoterRegistration = useCallback(async (electionId, voterAddress) => {
+    try {
+      // Update registration status in IPFS
+      const updatedRegistration = {
+        electionId,
+        walletAddress: voterAddress,
+        status: 'rejected',
+        updatedAt: new Date().toISOString()
+      };
+      
+      await ipfsService.updateRegistrationStatus(updatedRegistration, 'rejected');
+      
+      // Update local state if this is for the current user
+      if (voterAddress.toLowerCase() === account?.toLowerCase()) {
+        setVoterStatuses(prev => ({
+          ...prev,
+          [electionId]: 'rejected'
+        }));
+      }
+      
+      return true;
+    } catch (err) {
+      console.error('Error rejecting voter registration:', err);
+      return false;
+    }
+  }, [account, ipfsService]);
+
+  // Load registrations when account changes, but only once per account
+  useEffect(() => {
+    if (account && (!initialLoadRef.current[account] || universalAccess)) {
+      loadRegistrations();
+    }
+    
+    // Clear registrations when account changes
+    if (!account) {
+      setRegisteredElections([]);
+      setVoterStatuses({});
+      initialLoadRef.current = {};
+    }
+  }, [account, loadRegistrations, universalAccess]);
+
   const value = {
     registeredElections,
+    voterStatuses,
     isRegisteredForElection,
     registerForElection,
     getRegistrationStatus,
+    getVoterStatusForElection,
+    getAllVoterStatuses,
     refreshRegistrations: (force) => loadRegistrations(force),
     addAllowedVoter,
+    rejectVoterRegistration,
     isLoading,
     error,
     universalAccess,

@@ -4,7 +4,7 @@ import { Web3Provider } from './contexts/Web3Context';
 import { AuthProvider } from './contexts/AuthContext';
 import { VoterRegistrationProvider } from './contexts/VoterRegistrationContext';
 
-// Pages
+// Standard Pages
 import HomePage from './pages/HomePage';
 import VotingDashboard from './pages/VotingDashboard';
 import VoteCastingPage from './pages/VoteCastingPage';
@@ -12,18 +12,22 @@ import ElectionManagement from './pages/ElectionManagement';
 import ResultsPage from './pages/ResultsPage';
 import CreateElectionPage from './pages/CreateElectionPage';
 import CandidateManagementPage from './pages/CandidateManagementPage';
-import AboutPage from './pages/AboutPage';
-import FAQPage from './pages/FAQPage';
 import ProfilePage from './pages/ProfilePage';
 import SettingsPage from './pages/SettingsPage';
 import HelpPage from './pages/HelpPage';
+import AboutPage from './pages/AboutPage';
+import FAQPage from './pages/FAQPage';
 import VoterRegistrationPage from './pages/VotersRegisterationPage';
-import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage.jsx';
-import ContractTester from './pages/ContractTester.jsx';
-import CandidateDebugger from './pages/CandidateDebugger.jsx';
-import EnhancedAdminDashboard from './pages/EnhancedAdminDashboard.jsx';
-import EnhancedVoterRegistration from './pages/EnhancedVoterRegistrationPage.jsx';
+import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage';
 
+// Enhanced Pages
+import EnhancedAdminDashboard from './pages/EnhancedAdminDashboard';
+import EnhancedVoterRegistration from './pages/EnhancedVoterRegistrationPage';
+import ContractTester from './pages/ContractTester';
+
+// Create new IntegratedDashboard page for now
+import IntegratedDashboard from './pages/IntegratedDashboard';
+import EnhancedVoterManagementPage from './pages/EnhancedVoterManagementPage';
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -51,11 +55,29 @@ const App = () => {
               <Route path="/faq" element={<FAQPage />} />
               <Route path="/register/:electionId/:registrationCode" element={<VoterRegistrationPage />} />
               <Route path="/contract-test" element={<ContractTester />} />
-              <Route path="/candidate-debug" element={<CandidateDebugger />} />
               
-              {/* Protected Routes */}
+              {/* Enhanced Registration Route */}
+              <Route 
+                path="/register-vote" 
+                element={
+                  <ProtectedRoute>
+                    <EnhancedVoterRegistration />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              {/* Dashboard Routes */}
               <Route 
                 path="/dashboard" 
+                element={
+                  <ProtectedRoute>
+                    <IntegratedDashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              <Route 
+                path="/dashboard-classic" 
                 element={
                   <ProtectedRoute>
                     <VotingDashboard />
@@ -63,19 +85,12 @@ const App = () => {
                 } 
               />
 
+              {/* Enhanced Admin Dashboard */}
               <Route 
                 path="/admin-dashboard" 
                 element={
                   <ProtectedRoute>
                     <EnhancedAdminDashboard />
-                  </ProtectedRoute>
-                } 
-              />
-              <Route 
-                path="/register-vote" 
-                element={
-                  <ProtectedRoute>
-                    <EnhancedVoterRegistration />
                   </ProtectedRoute>
                 } 
               />
@@ -116,12 +131,30 @@ const App = () => {
                 } 
               />
               
-              {/* New route for candidate management */}
+              {/* Candidate and Voter Management Routes */}
               <Route 
                 path="/manage-candidates/:electionId" 
                 element={
                   <ProtectedRoute>
                     <CandidateManagementPage />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              <Route 
+                path="/manage-registrations/:electionId" 
+                element={
+                  <ProtectedRoute>
+                    <VoterRegistrationManagementPage />
+                  </ProtectedRoute>
+                } 
+              />
+              
+              <Route 
+                path="/enhanced-voter-management/:electionId" 
+                element={
+                  <ProtectedRoute>
+                    <EnhancedVoterManagementPage />
                   </ProtectedRoute>
                 } 
               />
@@ -140,15 +173,6 @@ const App = () => {
                 element={
                   <ProtectedRoute>
                     <SettingsPage />
-                  </ProtectedRoute>
-                } 
-              />
-              
-              <Route 
-                path="/manage-registrations/:electionId" 
-                element={
-                  <ProtectedRoute>
-                    <VoterRegistrationManagementPage />
                   </ProtectedRoute>
                 } 
               />
