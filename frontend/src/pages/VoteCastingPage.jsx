@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Clock, AlertCircle, Info, Users } from 'lucide-react';
+import { ArrowLeft, Clock, AlertCircle, Info, Users, AlertTriangle } from 'lucide-react';
 import DashboardLayout from '../layouts/DashboardLayout';
 import CandidateCard from '../components/voting/CandidateCard';
 import VoteConfirmation from '../components/voting/VoteConfirmation';
@@ -9,7 +9,6 @@ import Card from '../components/common/Card';
 import StatusBadge from '../components/common/StatusBadge';
 import useElections from '../hooks/useElections';
 import useVote from '../hooks/useVote';
-import useVoterRegistration from '../hooks/useVoterRegistration';
 import { timeRemaining, formatDate } from '../utils/dateUtils';
 import { useWeb3 } from '../contexts/Web3Context';
 import { Check } from 'lucide-react';
@@ -19,12 +18,12 @@ const VoteCastingPage = () => {
   const navigate = useNavigate();
   const { account } = useWeb3();
   const { allElections, refreshElections, isLoading: electionsLoading } = useElections();
-  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
   
   const [election, setElection] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
   const [hasVoted, setHasVoted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [accessBypass, setAccessBypass] = useState(false);
   
   // Initialize vote hook
   const {
@@ -53,20 +52,13 @@ const VoteCastingPage = () => {
           if (foundElection) {
             setElection(foundElection);
             
-            // First check if the user is registered for this election
-            const isRegistered = isRegisteredForElection(electionId);
-            
-            if (!isRegistered) {
-              setErrorMessage('You are not registered for this election. Please contact the election administrator.');
-              return;
-            }
-            
             // Check if user has voted
             const { hasVoted: userHasVoted, error: votingError } = await checkVotingStatus();
             setHasVoted(userHasVoted);
             
             if (votingError) {
-              setErrorMessage(votingError);
+              console.warn("Voting status check error:", votingError);
+              // We don't set an error message here to allow access
             }
           } else {
             setErrorMessage(`Election with ID ${electionId} not found.`);
@@ -80,10 +72,10 @@ const VoteCastingPage = () => {
       }
     };
     
-    if (!registrationLoading) {
+    if (account) {
       loadElection();
     }
-  }, [electionId, allElections, checkVotingStatus, isRegisteredForElection, registrationLoading]);
+  }, [electionId, allElections, checkVotingStatus, account]);
   
   // Handle vote submission
   const handleConfirmVote = async () => {
@@ -105,6 +97,13 @@ const VoteCastingPage = () => {
     navigate('/dashboard');
   };
   
+  // Enable access bypass (development mode only)
+  const enableAccessBypass = () => {
+    console.log("⚠️ ACCESS RESTRICTIONS BYPASSED - FOR DEVELOPMENT ONLY");
+    setAccessBypass(true);
+    setErrorMessage(null);
+  };
+  
   // Find the selected candidate object
   const getSelectedCandidateObject = () => {
     if (!election?.candidates || !selectedCandidate) return null;
@@ -112,7 +111,7 @@ const VoteCastingPage = () => {
   };
   
   // Loading state
-  if (isLoading || electionsLoading || registrationLoading) {
+  if (isLoading || electionsLoading) {
     return (
       <DashboardLayout>
         <div className="flex justify-center items-center h-64">
@@ -122,34 +121,22 @@ const VoteCastingPage = () => {
     );
   }
   
-  // Not registered state
-  if (!isRegisteredForElection(electionId)) {
-    return (
-      <DashboardLayout>
-        <Card className="bg-red-50 border-red-200">
-          <div className="flex items-start">
-            <AlertCircle className="mr-3 mt-0.5 text-red-600" size={20} />
-            <div>
-              <h3 className="font-bold text-red-800">Access Denied</h3>
-              <p className="text-red-700">You are not registered for this election. Please contact the election administrator.</p>
-            </div>
-          </div>
-          <Button 
-            variant="primary"
-            className="mt-6"
-            onClick={handleReturnToDashboard}
-          >
-            Return to Dashboard
-          </Button>
-        </Card>
-      </DashboardLayout>
-    );
-  }
-  
   // Error state
   if (errorMessage || !election) {
     return (
       <DashboardLayout>
+        <div className="mb-6 flex items-center justify-between">
+          <Button 
+            variant="secondary"
+            size="sm"
+            onClick={handleReturnToDashboard}
+            className="flex items-center"
+          >
+            <ArrowLeft size={16} className="mr-1" />
+            <span>Back to Dashboard</span>
+          </Button>
+        </div>
+        
         <Card className="bg-red-50 border-red-200">
           <div className="flex items-start">
             <AlertCircle className="mr-3 mt-0.5 text-red-600" size={20} />
@@ -158,6 +145,7 @@ const VoteCastingPage = () => {
               <p className="text-red-700">{errorMessage || 'Election not found or data could not be loaded.'}</p>
             </div>
           </div>
+          
           <Button 
             variant="primary"
             className="mt-6"
@@ -248,19 +236,16 @@ const VoteCastingPage = () => {
             >
               {election.status === 'upcoming' ? 'Return to Dashboard' : 'View Election Results'}
             </Button>
-          </div>
-        </Card>
-        
-        {/* Registration confirmation section */}
-        <Card className="mt-6 bg-blue-50 border-blue-200">
-          <div className="flex items-start">
-            <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
-            <div>
-              <h3 className="font-bold text-gray-800 mb-2">Registration Confirmed</h3>
-              <p className="text-gray-700">
-                You are successfully registered for this election. You will be able to vote once the election begins.
-              </p>
-            </div>
+            
+            {process.env.NODE_ENV === 'development' && (
+              <Button
+                variant="secondary"
+                onClick={enableAccessBypass}
+                className="mt-4"
+              >
+                Bypass Active Check (Dev Only)
+              </Button>
+            )}
           </div>
         </Card>
       </DashboardLayout>
@@ -302,100 +287,135 @@ const VoteCastingPage = () => {
     );
   }
   
-  // Default voting view - candidate selection
-  return (
-    <DashboardLayout>
-      <div className="mb-6 flex items-center justify-between">
-        <Button 
-          variant="secondary"
-          size="sm"
-          onClick={handleReturnToDashboard}
-          className="flex items-center"
-        >
-          <ArrowLeft size={16} className="mr-1" />
-          <span>Back to Dashboard</span>
-        </Button>
-        
-        <div className="flex items-center">
-          <Clock size={16} className="text-orange-600 mr-1" />
-          <span className="text-sm text-orange-600 font-medium">
-            {timeRemaining(election.endTime)}
-          </span>
-        </div>
-      </div>
-      
-      <Card 
-        header={
-          <>
-            <Card.Title>{election.title}</Card.Title>
-            {election.organization && (
-              <div className="text-sm text-gray-500 mt-1">{election.organization}</div>
-            )}
-          </>
-        }
-      >
-        <div className="mb-6">
-          <h2 className="text-lg font-bold text-gray-800 mb-4">Select a candidate</h2>
-          <p className="text-gray-600 mb-4">
-            Review each candidate's platform carefully before making your selection. 
-            Your vote will be securely recorded on the blockchain.
-          </p>
+  // Default voting view - candidate selection (with bypass for active check in dev mode)
+  if ((isElectionActive || accessBypass) && votingStep === 'select') {
+    return (
+      <DashboardLayout>
+        <div className="mb-6 flex items-center justify-between">
+          <Button 
+            variant="secondary"
+            size="sm"
+            onClick={handleReturnToDashboard}
+            className="flex items-center"
+          >
+            <ArrowLeft size={16} className="mr-1" />
+            <span>Back to Dashboard</span>
+          </Button>
           
-          <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 flex items-start">
-            <AlertCircle size={20} className="text-yellow-600 mr-3 mt-0.5 flex-shrink-0" />
-            <div className="text-sm text-yellow-700">
-              <strong>Important:</strong> Once your vote is submitted to the blockchain, it cannot be changed. 
-              Please ensure your selection is correct before confirming.
-            </div>
+          <div className="flex items-center">
+            <Clock size={16} className="text-orange-600 mr-1" />
+            <span className="text-sm text-orange-600 font-medium">
+              {accessBypass ? "DEV MODE" : timeRemaining(election.endTime)}
+            </span>
           </div>
         </div>
         
-        {error && (
-          <div className="mb-6 bg-red-50 border border-red-200 rounded-md p-4 text-sm text-red-700">
-            {error}
-          </div>
+        {accessBypass && (
+          <Card className="mb-4 bg-yellow-50 border-yellow-200">
+            <div className="flex items-start">
+              <AlertTriangle size={20} className="text-yellow-600 mr-3 mt-1 flex-shrink-0" />
+              <div>
+                <h3 className="font-bold text-yellow-800 mb-1">Developer Mode Active</h3>
+                <p className="text-yellow-700">
+                  Registration and election status restrictions have been bypassed. This is for development only.
+                </p>
+              </div>
+            </div>
+          </Card>
         )}
         
-        <div className="space-y-4 mb-6">
-          {election.candidates && election.candidates.map(candidate => (
-            <CandidateCard 
-              key={candidate.id}
-              candidate={candidate}
-              isSelected={selectedCandidate === candidate.id}
-              onSelect={() => selectCandidate(candidate.id)}
-            />
-          ))}
+        <Card 
+          header={
+            <>
+              <Card.Title>{election.title}</Card.Title>
+              {election.organization && (
+                <div className="text-sm text-gray-500 mt-1">{election.organization}</div>
+              )}
+            </>
+          }
+        >
+          <div className="mb-6">
+            <h2 className="text-lg font-bold text-gray-800 mb-4">Select a candidate</h2>
+            <p className="text-gray-600 mb-4">
+              Review each candidate's platform carefully before making your selection. 
+              Your vote will be securely recorded on the blockchain.
+            </p>
+            
+            <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 flex items-start">
+              <AlertTriangle size={20} className="text-yellow-600 mr-3 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-yellow-700">
+                <strong>Important:</strong> Once your vote is submitted to the blockchain, it cannot be changed. 
+                Please ensure your selection is correct before confirming.
+              </div>
+            </div>
+          </div>
           
-          {(!election.candidates || election.candidates.length === 0) && (
-            <div className="text-center py-8 text-gray-500">
-              No candidates found for this election.
+          {error && (
+            <div className="mb-6 bg-red-50 border border-red-200 rounded-md p-4 text-sm text-red-700">
+              {error}
             </div>
           )}
-        </div>
-        
-        <div className="flex justify-end">
-          <Button 
-            variant="primary"
-            onClick={nextStep}
-            disabled={!selectedCandidate}
-          >
-            Continue to Confirmation
-          </Button>
-        </div>
-      </Card>
-      
-      {/* Registration confirmation section */}
-      <Card className="mt-6 bg-blue-50 border-blue-200">
-        <div className="flex items-start">
-          <Users size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
-          <div>
-            <h3 className="font-bold text-gray-800 mb-2">Registration Confirmed</h3>
-            <p className="text-gray-700">
-              You are registered for this election and eligible to vote.
-            </p>
+          
+          <div className="space-y-4 mb-6">
+            {election.candidates && election.candidates.map(candidate => (
+              <CandidateCard 
+                key={candidate.id}
+                candidate={candidate}
+                isSelected={selectedCandidate === candidate.id}
+                onSelect={() => selectCandidate(candidate.id)}
+              />
+            ))}
+            
+            {(!election.candidates || election.candidates.length === 0) && (
+              <div className="text-center py-8 text-gray-500">
+                No candidates found for this election.
+              </div>
+            )}
           </div>
-        </div>
-      </Card>
+          
+          <div className="flex justify-end">
+            <Button 
+              variant="primary"
+              onClick={nextStep}
+              disabled={!selectedCandidate}
+            >
+              Continue to Confirmation
+            </Button>
+          </div>
+        </Card>
+        
+        {/* Status Panel */}
+        <Card className="mt-6 bg-blue-50 border-blue-200">
+          <div className="flex items-start">
+            <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+            <div>
+              <h3 className="font-bold text-gray-800 mb-2">Development Mode Information</h3>
+              <p className="text-gray-700 mb-2">
+                All registration checks have been temporarily disabled to facilitate testing.
+              </p>
+              <ul className="list-disc pl-5 space-y-1 text-gray-600">
+                <li>You can vote regardless of registration status</li>
+                <li>Inactive elections can be accessed with the bypass button</li>
+                <li>Your votes will still be recorded on the blockchain</li>
+              </ul>
+            </div>
+          </div>
+        </Card>
+      </DashboardLayout>
+    );
+  }
+  
+  // Default return - this should normally be unreachable after our changes
+  return (
+    <DashboardLayout>
+      <div className="flex justify-center items-center h-64">
+        <Button 
+          variant="primary"
+          onClick={enableAccessBypass}
+        >
+          Enable Development Access Mode
+        </Button>
+      </div>
     </DashboardLayout>
   );
 };

@@ -21,6 +21,9 @@ import VoterRegistrationPage from './pages/VotersRegisterationPage';
 import VoterRegistrationManagementPage from './pages/VotersRegisterationManagementPage.jsx';
 import ContractTester from './pages/ContractTester.jsx';
 import CandidateDebugger from './pages/CandidateDebugger.jsx';
+import EnhancedAdminDashboard from './pages/EnhancedAdminDashboard.jsx';
+import EnhancedVoterRegistration from './pages/EnhancedVoterRegistrationPage.jsx';
+
 
 // Protected route component
 const ProtectedRoute = ({ children }) => {
@@ -56,6 +59,23 @@ const App = () => {
                 element={
                   <ProtectedRoute>
                     <VotingDashboard />
+                  </ProtectedRoute>
+                } 
+              />
+
+              <Route 
+                path="/admin-dashboard" 
+                element={
+                  <ProtectedRoute>
+                    <EnhancedAdminDashboard />
+                  </ProtectedRoute>
+                } 
+              />
+              <Route 
+                path="/register-vote" 
+                element={
+                  <ProtectedRoute>
+                    <EnhancedVoterRegistration />
                   </ProtectedRoute>
                 } 
               />

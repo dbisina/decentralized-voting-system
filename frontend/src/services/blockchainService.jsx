@@ -601,7 +601,7 @@ async addCandidate(electionId, name, details) {
       
       // Use explicit gas settings
       const tx = await contractWithSigner.vote(electionIdBN, candidateIdBN, {
-        gasLimit: 500000  // Set a high gas limit
+        gasLimit: 1000000 // Set a high gas limit
       });
       
       // Wait for transaction to be mined
@@ -705,7 +705,7 @@ async addCandidate(electionId, name, details) {
       
       // Add explicit gas settings
       const options = {
-        gasLimit: 500000
+        gasLimit: 1000000
       };
       
       console.log("Sending finalize transaction with options:", options);

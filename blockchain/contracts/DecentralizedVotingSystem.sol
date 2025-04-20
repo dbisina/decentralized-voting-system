@@ -2,52 +2,85 @@
 pragma solidity ^0.8.17;
 
 /**
- * @title Decentralized Voting System
- * @dev Implements a secure, transparent voting system on the blockchain
+ * @title Improved Decentralized Voting System with Enhanced Access Control
+ * @dev Implements multi-tier access control, better registration flow, and improved security
  */
-contract DecentralizedVotingSystem {
+contract ImprovedDecentralizedVotingSystem {
+    // Role definitions
+    bytes32 public constant SUPER_ADMIN_ROLE = keccak256("SUPER_ADMIN_ROLE");
+    bytes32 public constant ELECTION_ADMIN_ROLE = keccak256("ELECTION_ADMIN_ROLE");
+    bytes32 public constant AUDITOR_ROLE = keccak256("AUDITOR_ROLE");
+    bytes32 public constant VOTER_ROLE = keccak256("VOTER_ROLE");
+
+    // Election types
+    enum ElectionType { PUBLIC, PRIVATE, ORGANIZATION }
+    
+    // Election status
+    enum ElectionStatus { DRAFT, REGISTRATION, ACTIVE, ENDED, FINALIZED }
+    
+    // Voter status
+    enum VoterStatus { NONE, PENDING, APPROVED, REJECTED, BLACKLISTED }
+    
     // Structs
     struct Candidate {
         uint256 id;
         string name;
-        string details;    // IPFS hash for candidate details
+        string details;
         uint256 voteCount;
+        bool isActive;
     }
 
-    struct Election {
+    struct ElectionInfo {
         uint256 id;
         string title;
-        string description; // IPFS hash for election details
-        uint256 startTime;
-        uint256 endTime;
-        bool finalized;
+        string description;
+        uint256 registrationStartTime;
+        uint256 votingStartTime;
+        uint256 votingEndTime;
+        ElectionStatus status;
+        ElectionType electionType;
         address admin;
-        mapping(uint256 => Candidate) candidates;
         uint256 candidateCount;
-        mapping(address => bool) hasVoted;
         uint256 totalVotes;
+        bytes32 organizationId;
+        string metadataURI;  // For IPFS or other metadata storage
+    }
+
+    struct VoterRegistration {
+        VoterStatus status;
+        uint256 registrationTime;
+        address approver;
+        string verificationData;  // For KYC/verification details
     }
 
     // State variables
     address public owner;
     uint256 public electionCount;
-    mapping(uint256 => Election) public elections;
-    mapping(address => bool) public admins;
+    
+    // Mappings
+    mapping(bytes32 => mapping(address => bool)) public roles;
+    mapping(uint256 => mapping(uint256 => Candidate)) public candidates;
+    mapping(uint256 => ElectionInfo) public electionInfo;
+    mapping(uint256 => mapping(address => bool)) public hasVoted;
+    mapping(uint256 => mapping(address => VoterRegistration)) public voterRegistrations;
+    mapping(bytes32 => bool) public organizations;
+    mapping(uint256 => mapping(address => uint256)) public votingReceipts;  // For vote verification
     
     // Events
-    event ElectionCreated(uint256 indexed electionId, string title, address admin);
+    event ElectionCreated(uint256 indexed electionId, string title, ElectionType electionType, address admin);
     event CandidateAdded(uint256 indexed electionId, uint256 candidateId, string name);
-    event VoteCast(uint256 indexed electionId, address indexed voter, uint256 candidateId);
+    event VoterRegistered(uint256 indexed electionId, address indexed voter, VoterStatus status);
+    event VoterStatusUpdated(uint256 indexed electionId, address indexed voter, VoterStatus newStatus, address approver);
+    event VoteCast(uint256 indexed electionId, address indexed voter, uint256 candidateId, uint256 voteReceipt);
+    event ElectionStatusChanged(uint256 indexed electionId, ElectionStatus newStatus);
     event ElectionFinalized(uint256 indexed electionId, uint256 winningCandidateId);
+    event OrganizationCreated(bytes32 indexed organizationId, string name);
+    event RoleGranted(bytes32 indexed role, address indexed account);
+    event RoleRevoked(bytes32 indexed role, address indexed account);
 
     // Modifiers
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can call this function");
-        _;
-    }
-
-    modifier onlyAdmin() {
-        require(admins[msg.sender] || msg.sender == owner, "Only admin can call this function");
+    modifier onlyRole(bytes32 role) {
+        require(hasRole(role, msg.sender), "Access denied: role not granted");
         _;
     }
 
@@ -56,202 +89,321 @@ contract DecentralizedVotingSystem {
         _;
     }
 
-    modifier electionAdmin(uint256 _electionId) {
-        require(
-            elections[_electionId].admin == msg.sender || msg.sender == owner,
-            "Only election admin can call this function"
-        );
+    modifier electionInStatus(uint256 _electionId, ElectionStatus _status) {
+        require(electionInfo[_electionId].status == _status, "Election is not in required status");
         _;
     }
 
-    modifier electionActive(uint256 _electionId) {
+    modifier canManageElection(uint256 _electionId) {
         require(
-            block.timestamp >= elections[_electionId].startTime && 
-            block.timestamp <= elections[_electionId].endTime,
-            "Election is not active"
+            hasRole(SUPER_ADMIN_ROLE, msg.sender) || 
+            msg.sender == electionInfo[_electionId].admin,
+            "Not authorized to manage this election"
         );
-        _;
-    }
-
-    modifier electionNotFinalized(uint256 _electionId) {
-        require(!elections[_electionId].finalized, "Election is already finalized");
         _;
     }
 
     // Constructor
     constructor() {
         owner = msg.sender;
-        admins[msg.sender] = true;
+        _grantRole(SUPER_ADMIN_ROLE, msg.sender);
         electionCount = 0;
     }
 
     /**
-     * @dev Add a new admin
-     * @param _admin Address of the new admin
+     * @dev Check if an account has a specific role
      */
-    function addAdmin(address _admin) external onlyOwner {
-        require(_admin != address(0), "Invalid address");
-        admins[_admin] = true;
+    function hasRole(bytes32 role, address account) public view returns (bool) {
+        return roles[role][account];
     }
 
     /**
-     * @dev Remove an admin
-     * @param _admin Address of the admin to remove
+     * @dev Grant a role to an account
      */
-    function removeAdmin(address _admin) external onlyOwner {
-        require(_admin != owner, "Cannot remove owner as admin");
-        admins[_admin] = false;
+    function grantRole(bytes32 role, address account) external onlyRole(SUPER_ADMIN_ROLE) {
+        _grantRole(role, account);
     }
 
     /**
-     * @dev Create a new election
-     * @param _title Title of the election
-     * @param _description IPFS hash containing election details
-     * @param _startTime Start time of the election (Unix timestamp)
-     * @param _endTime End time of the election (Unix timestamp)
-     * @return electionId ID of the newly created election
+     * @dev Revoke a role from an account
+     */
+    function revokeRole(bytes32 role, address account) external onlyRole(SUPER_ADMIN_ROLE) {
+        _revokeRole(role, account);
+    }
+
+    /**
+     * @dev Internal function to grant a role
+     */
+    function _grantRole(bytes32 role, address account) internal {
+        if (!hasRole(role, account)) {
+            roles[role][account] = true;
+            emit RoleGranted(role, account);
+        }
+    }
+
+    /**
+     * @dev Internal function to revoke a role
+     */
+    function _revokeRole(bytes32 role, address account) internal {
+        if (hasRole(role, account)) {
+            roles[role][account] = false;
+            emit RoleRevoked(role, account);
+        }
+    }
+
+    /**
+     * @dev Create a new organization
+     */
+    function createOrganization(bytes32 _organizationId, string memory _name) 
+        external 
+        onlyRole(SUPER_ADMIN_ROLE) 
+    {
+        require(!organizations[_organizationId], "Organization already exists");
+        organizations[_organizationId] = true;
+        emit OrganizationCreated(_organizationId, _name);
+    }
+
+    /**
+     * @dev Create a new election with enhanced parameters
      */
     function createElection(
         string memory _title,
         string memory _description,
-        uint256 _startTime,
-        uint256 _endTime
-    ) external onlyAdmin returns (uint256) {
-        require(_startTime >= block.timestamp, "Start time must be in the future");
-        require(_endTime > _startTime, "End time must be after start time");
+        uint256 _registrationStartTime,
+        uint256 _votingStartTime,
+        uint256 _votingEndTime,
+        ElectionType _electionType,
+        bytes32 _organizationId,
+        string memory _metadataURI
+    ) external onlyRole(ELECTION_ADMIN_ROLE) returns (uint256) {
+        require(_registrationStartTime >= block.timestamp, "Registration start must be in the future");
+        require(_votingStartTime > _registrationStartTime, "Voting start must be after registration start");
+        require(_votingEndTime > _votingStartTime, "Voting end must be after voting start");
+        
+        if (_electionType == ElectionType.ORGANIZATION) {
+            require(organizations[_organizationId], "Organization does not exist");
+        }
 
         electionCount++;
         uint256 electionId = electionCount;
         
-        Election storage newElection = elections[electionId];
-        newElection.id = electionId;
-        newElection.title = _title;
-        newElection.description = _description;
-        newElection.startTime = _startTime;
-        newElection.endTime = _endTime;
-        newElection.finalized = false;
-        newElection.admin = msg.sender;
-        newElection.candidateCount = 0;
-        newElection.totalVotes = 0;
+        electionInfo[electionId] = ElectionInfo({
+            id: electionId,
+            title: _title,
+            description: _description,
+            registrationStartTime: _registrationStartTime,
+            votingStartTime: _votingStartTime,
+            votingEndTime: _votingEndTime,
+            status: ElectionStatus.DRAFT,
+            electionType: _electionType,
+            admin: msg.sender,
+            candidateCount: 0,
+            totalVotes: 0,
+            organizationId: _organizationId,
+            metadataURI: _metadataURI
+        });
 
-        emit ElectionCreated(electionId, _title, msg.sender);
+        emit ElectionCreated(electionId, _title, _electionType, msg.sender);
         return electionId;
     }
 
     /**
-     * @dev Add a candidate to an election
-     * @param _electionId ID of the election
-     * @param _name Name of the candidate
-     * @param _details IPFS hash containing candidate details
-     * @return candidateId ID of the newly added candidate
+     * @dev Add a candidate to an election with enhanced checks
      */
     function addCandidate(
         uint256 _electionId,
         string memory _name,
         string memory _details
-    ) 
-        external 
-        electionExists(_electionId)
-        electionAdmin(_electionId)
-        electionNotFinalized(_electionId)
-        returns (uint256)
-    {
+    ) external electionExists(_electionId) canManageElection(_electionId) returns (uint256) {
+        require(electionInfo[_electionId].status == ElectionStatus.DRAFT, "Can only add candidates to draft elections");
         require(bytes(_name).length > 0, "Candidate name cannot be empty");
         
-        Election storage election = elections[_electionId];
-        require(block.timestamp < election.startTime, "Cannot add candidate after election has started");
+        electionInfo[_electionId].candidateCount++;
+        uint256 candidateId = electionInfo[_electionId].candidateCount;
         
-        election.candidateCount++;
-        uint256 candidateId = election.candidateCount;
-        
-        Candidate storage newCandidate = election.candidates[candidateId];
-        newCandidate.id = candidateId;
-        newCandidate.name = _name;
-        newCandidate.details = _details;
-        newCandidate.voteCount = 0;
+        candidates[_electionId][candidateId] = Candidate({
+            id: candidateId,
+            name: _name,
+            details: _details,
+            voteCount: 0,
+            isActive: true
+        });
 
         emit CandidateAdded(_electionId, candidateId, _name);
         return candidateId;
     }
 
     /**
-     * @dev Cast a vote in an election
-     * @param _electionId ID of the election
-     * @param _candidateId ID of the candidate
+     * @dev Register a voter for an election
+     */
+    function registerVoter(
+        uint256 _electionId, 
+        string memory _verificationData
+    ) external electionExists(_electionId) {
+        require(
+            electionInfo[_electionId].status == ElectionStatus.REGISTRATION || 
+            (electionInfo[_electionId].electionType == ElectionType.PUBLIC && electionInfo[_electionId].status == ElectionStatus.ACTIVE),
+            "Registration not open"
+        );
+        
+        require(
+            voterRegistrations[_electionId][msg.sender].status == VoterStatus.NONE ||
+            voterRegistrations[_electionId][msg.sender].status == VoterStatus.REJECTED,
+            "Already registered or blacklisted"
+        );
+
+        VoterStatus status = electionInfo[_electionId].electionType == ElectionType.PUBLIC ? 
+            VoterStatus.APPROVED : VoterStatus.PENDING;
+
+        voterRegistrations[_electionId][msg.sender] = VoterRegistration({
+            status: status,
+            registrationTime: block.timestamp,
+            approver: address(0),
+            verificationData: _verificationData
+        });
+
+        emit VoterRegistered(_electionId, msg.sender, status);
+    }
+
+    /**
+     * @dev Approve or reject a voter registration
+     */
+    function updateVoterStatus(
+        uint256 _electionId,
+        address _voter,
+        VoterStatus _newStatus
+    ) external electionExists(_electionId) canManageElection(_electionId) {
+        require(
+            _newStatus == VoterStatus.APPROVED || 
+            _newStatus == VoterStatus.REJECTED || 
+            _newStatus == VoterStatus.BLACKLISTED,
+            "Invalid status"
+        );
+        
+        require(
+            voterRegistrations[_electionId][_voter].status == VoterStatus.PENDING,
+            "Can only update pending registrations"
+        );
+
+        voterRegistrations[_electionId][_voter].status = _newStatus;
+        voterRegistrations[_electionId][_voter].approver = msg.sender;
+
+        emit VoterStatusUpdated(_electionId, _voter, _newStatus, msg.sender);
+    }
+
+    /**
+     * @dev Bulk approve voters
+     */
+    function bulkApproveVoters(
+        uint256 _electionId,
+        address[] memory _voters
+    ) external electionExists(_electionId) canManageElection(_electionId) {
+        for (uint i = 0; i < _voters.length; i++) {
+            if (voterRegistrations[_electionId][_voters[i]].status == VoterStatus.PENDING) {
+                voterRegistrations[_electionId][_voters[i]].status = VoterStatus.APPROVED;
+                voterRegistrations[_electionId][_voters[i]].approver = msg.sender;
+                emit VoterStatusUpdated(_electionId, _voters[i], VoterStatus.APPROVED, msg.sender);
+            }
+        }
+    }
+
+    /**
+     * @dev Update election status
+     */
+    function updateElectionStatus(
+        uint256 _electionId,
+        ElectionStatus _newStatus
+    ) external electionExists(_electionId) canManageElection(_electionId) {
+        ElectionInfo storage election = electionInfo[_electionId];
+        
+        // Validate status transitions
+        if (_newStatus == ElectionStatus.REGISTRATION) {
+            require(election.status == ElectionStatus.DRAFT, "Can only move to registration from draft");
+            require(election.candidateCount > 0, "Must have at least one candidate");
+        } else if (_newStatus == ElectionStatus.ACTIVE) {
+            require(election.status == ElectionStatus.REGISTRATION, "Can only move to active from registration");
+            require(block.timestamp >= election.votingStartTime, "Voting period has not started");
+        } else if (_newStatus == ElectionStatus.ENDED) {
+            require(election.status == ElectionStatus.ACTIVE, "Can only end active elections");
+            require(block.timestamp >= election.votingEndTime, "Voting period has not ended");
+        }
+        
+        election.status = _newStatus;
+        emit ElectionStatusChanged(_electionId, _newStatus);
+    }
+
+    /**
+     * @dev Cast a vote with enhanced validation
      */
     function vote(uint256 _electionId, uint256 _candidateId) 
         external 
-        electionExists(_electionId)
-        electionActive(_electionId)
-        electionNotFinalized(_electionId)
+        electionExists(_electionId) 
+        electionInStatus(_electionId, ElectionStatus.ACTIVE) 
     {
-        Election storage election = elections[_electionId];
+        ElectionInfo storage election = electionInfo[_electionId];
         
-        require(!election.hasVoted[msg.sender], "You have already voted in this election");
+        require(block.timestamp >= election.votingStartTime && block.timestamp <= election.votingEndTime, "Outside voting period");
+        require(!hasVoted[_electionId][msg.sender], "Already voted");
         require(_candidateId > 0 && _candidateId <= election.candidateCount, "Invalid candidate");
+        require(candidates[_electionId][_candidateId].isActive, "Candidate is not active");
         
-        election.hasVoted[msg.sender] = true;
-        election.candidates[_candidateId].voteCount++;
+        // Check voter eligibility
+        require(
+            election.electionType == ElectionType.PUBLIC || 
+            voterRegistrations[_electionId][msg.sender].status == VoterStatus.APPROVED,
+            "Not eligible to vote"
+        );
+        
+        hasVoted[_electionId][msg.sender] = true;
+        candidates[_electionId][_candidateId].voteCount++;
         election.totalVotes++;
         
-        emit VoteCast(_electionId, msg.sender, _candidateId);
+        // Generate vote receipt for verification
+        uint256 voteReceipt = uint256(keccak256(abi.encodePacked(_electionId, msg.sender, _candidateId, block.timestamp)));
+        votingReceipts[_electionId][msg.sender] = voteReceipt;
+        
+        emit VoteCast(_electionId, msg.sender, _candidateId, voteReceipt);
     }
 
     /**
-     * @dev Finalize an election after it has ended
-     * @param _electionId ID of the election
-     * @return winningCandidateId ID of the winning candidate
+     * @dev Finalize an election with enhanced validation
      */
     function finalizeElection(uint256 _electionId) 
         external 
-        electionExists(_electionId)
-        electionAdmin(_electionId)
-        electionNotFinalized(_electionId)
-        returns (uint256)
+        electionExists(_electionId) 
+        canManageElection(_electionId) 
+        electionInStatus(_electionId, ElectionStatus.ENDED) 
     {
-        Election storage election = elections[_electionId];
-        require(block.timestamp > election.endTime, "Election has not ended yet");
+        ElectionInfo storage election = electionInfo[_electionId];
         
-        uint256 winningCandidateId = getWinningCandidate(_electionId);
-        election.finalized = true;
+        uint256 winningCandidateId = 0;
+        uint256 maxVotes = 0;
         
+        for (uint256 i = 1; i <= election.candidateCount; i++) {
+            if (candidates[_electionId][i].voteCount > maxVotes) {
+                maxVotes = candidates[_electionId][i].voteCount;
+                winningCandidateId = i;
+            }
+        }
+        
+        election.status = ElectionStatus.FINALIZED;
         emit ElectionFinalized(_electionId, winningCandidateId);
-        return winningCandidateId;
     }
 
     /**
-     * @dev Get candidate details
-     * @param _electionId ID of the election
-     * @param _candidateId ID of the candidate
-     * @return id Candidate ID
-     * @return name Candidate name
-     * @return details Candidate details (IPFS hash)
-     * @return voteCount Number of votes received
+     * @dev Get voter registration details
      */
-    function getCandidate(uint256 _electionId, uint256 _candidateId)
-        external
-        view
-        electionExists(_electionId)
-        returns (uint256 id, string memory name, string memory details, uint256 voteCount)
+    function getVoterRegistration(uint256 _electionId, address _voter) 
+        external 
+        view 
+        electionExists(_electionId) 
+        returns (VoterRegistration memory) 
     {
-        require(_candidateId > 0 && _candidateId <= elections[_electionId].candidateCount, "Invalid candidate");
-        
-        Candidate storage candidate = elections[_electionId].candidates[_candidateId];
-        return (candidate.id, candidate.name, candidate.details, candidate.voteCount);
+        return voterRegistrations[_electionId][_voter];
     }
 
     /**
-     * @dev Get election details
-     * @param _electionId ID of the election
-     * @return id Election ID
-     * @return title Election title
-     * @return description Election description (IPFS hash)
-     * @return startTime Start time of the election
-     * @return endTime End time of the election
-     * @return finalized Whether the election is finalized
-     * @return admin Admin address
-     * @return candidateCount Number of candidates
-     * @return totalVotes Total number of votes cast
+     * @dev Get election details with enhanced information
      */
     function getElectionDetails(uint256 _electionId)
         external
@@ -261,65 +413,45 @@ contract DecentralizedVotingSystem {
             uint256 id,
             string memory title,
             string memory description,
-            uint256 startTime,
-            uint256 endTime,
-            bool finalized,
+            uint256 registrationStartTime,
+            uint256 votingStartTime,
+            uint256 votingEndTime,
+            ElectionStatus status,
+            ElectionType electionType,
             address admin,
             uint256 candidateCount,
-            uint256 totalVotes
+            uint256 totalVotes,
+            bytes32 organizationId,
+            string memory metadataURI
         )
     {
-        Election storage election = elections[_electionId];
+        ElectionInfo storage election = electionInfo[_electionId];
         return (
             election.id,
             election.title,
             election.description,
-            election.startTime,
-            election.endTime,
-            election.finalized,
+            election.registrationStartTime,
+            election.votingStartTime,
+            election.votingEndTime,
+            election.status,
+            election.electionType,
             election.admin,
             election.candidateCount,
-            election.totalVotes
+            election.totalVotes,
+            election.organizationId,
+            election.metadataURI
         );
     }
 
     /**
-     * @dev Check if an address has voted in an election
-     * @param _electionId ID of the election
-     * @param _voter Address of the voter
-     * @return True if the address has voted, false otherwise
+     * @dev Verify a vote receipt
      */
-    function hasVoted(uint256 _electionId, address _voter)
-        external
-        view
-        electionExists(_electionId)
-        returns (bool)
+    function verifyVoteReceipt(uint256 _electionId, address _voter, uint256 _receipt) 
+        external 
+        view 
+        electionExists(_electionId) 
+        returns (bool) 
     {
-        return elections[_electionId].hasVoted[_voter];
-    }
-
-    /**
-     * @dev Get the winning candidate ID for an election
-     * @param _electionId ID of the election
-     * @return winningCandidateId ID of the winning candidate
-     */
-    function getWinningCandidate(uint256 _electionId)
-        public
-        view
-        electionExists(_electionId)
-        returns (uint256 winningCandidateId)
-    {
-        Election storage election = elections[_electionId];
-        uint256 winningVoteCount = 0;
-        
-        for (uint256 i = 1; i <= election.candidateCount; i++) {
-            if (election.candidates[i].voteCount > winningVoteCount) {
-                winningVoteCount = election.candidates[i].voteCount;
-                winningCandidateId = i;
-            }
-        }
-        
-        require(winningCandidateId > 0, "No votes cast in this election");
-        return winningCandidateId;
+        return votingReceipts[_electionId][_voter] == _receipt;
     }
 }

@@ -28,8 +28,6 @@ class IPFSService {
     // Fallback to public gateways for content retrieval
     this.gateways = [
       'https://gold-implicit-gayal-493.mypinata.cloud/ipfs/',
-      'https://cloudflare-ipfs.com/ipfs/',
-      'https://ipfs.io/ipfs/'
     ];
     
     // In-memory cache to prevent repeated requests

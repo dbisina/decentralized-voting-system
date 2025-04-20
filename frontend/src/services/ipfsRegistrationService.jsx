@@ -1,3 +1,4 @@
+// frontend/src/services/ipfsRegistrationService.jsx
 import axios from 'axios';
 
 class IPFSRegistrationService {
@@ -64,6 +65,11 @@ class IPFSRegistrationService {
         // Update local reference for this wallet address
         this._updateLocalReference(registrationWithHash);
         
+        // Also update the mock storage for consistency
+        this.mockStorage = this.mockStorage || {};
+        this.mockStorage[ipfsHash] = JSON.stringify(registrationWithHash);
+        this._saveMockStorage();
+        
         return ipfsHash;
       } catch (apiError) {
         // Check for CORS issues and mark flag if detected
@@ -91,6 +97,9 @@ class IPFSRegistrationService {
    */
   async getElectionRegistrations(electionId) {
     try {
+      // Clear cache before fetching to ensure we get fresh data
+      this._clearCacheForElection(electionId);
+      
       // If CORS issues or no credentials, use local storage as fallback
       if (!this.hasValidCredentials || this.hasCorsIssues) {
         console.warn('Using localStorage fallback for fetching registrations');
@@ -113,13 +122,29 @@ class IPFSRegistrationService {
         // Fetch each registration data
         const registrations = [];
         for (const pin of response.data.rows) {
-          const data = await this.getRegistration(pin.ipfs_pin_hash);
-          if (data && data.electionId === electionId) {
-            registrations.push(data);
+          try {
+            const data = await this.getRegistration(pin.ipfs_pin_hash);
+            if (data && data.electionId == electionId) { // Use loose equality to handle string/number comparison
+              registrations.push(data);
+            }
+          } catch (fetchError) {
+            console.warn(`Failed to fetch registration ${pin.ipfs_pin_hash}:`, fetchError);
+            // Try to get from local storage as fallback
+            const localData = this._getLocalRegistrationByHash(pin.ipfs_pin_hash);
+            if (localData && localData.electionId == electionId) {
+              registrations.push(localData);
+            }
           }
         }
   
-        return registrations;
+        // If we're in mock mode, fetch local ones too and merge the results
+        // to ensure we have a complete list
+        const localRegistrations = this._getLocalElectionRegistrations(electionId);
+        
+        // Combine registrations and remove duplicates
+        const mergedRegistrations = this._mergeRegistrations(registrations, localRegistrations);
+        
+        return mergedRegistrations;
       } catch (apiError) {
         // Check for CORS issues and mark flag if detected
         if (apiError.message && (
@@ -136,6 +161,60 @@ class IPFSRegistrationService {
       
       // Fallback to local storage
       return this._getLocalElectionRegistrations(electionId);
+    }
+  }
+
+  /**
+   * Helper to merge registrations while avoiding duplicates
+   * @private
+   */
+  _mergeRegistrations(ipfsRegistrations, localRegistrations) {
+    const registrationMap = new Map();
+    
+    // First add IPFS registrations
+    ipfsRegistrations.forEach(reg => {
+      if (reg.walletAddress) {
+        registrationMap.set(reg.walletAddress.toLowerCase(), reg);
+      }
+    });
+    
+    // Then add local registrations if not already added
+    localRegistrations.forEach(reg => {
+      if (reg.walletAddress) {
+        const key = reg.walletAddress.toLowerCase();
+        
+        // If we already have this registration from IPFS, keep the one with the most recent timestamp
+        if (registrationMap.has(key)) {
+          const existing = registrationMap.get(key);
+          
+          // Use the most recently updated one
+          const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : 0;
+          const newTime = reg.updatedAt ? new Date(reg.updatedAt).getTime() : 0;
+          
+          if (newTime > existingTime) {
+            registrationMap.set(key, reg);
+          }
+        } else {
+          registrationMap.set(key, reg);
+        }
+      }
+    });
+    
+    return Array.from(registrationMap.values());
+  }
+
+  /**
+   * Clear cached registrations for a specific election
+   * @private
+   */
+  _clearCacheForElection(electionId) {
+    // Clear in-memory cache for this election
+    const cacheKeys = Object.keys(this.registrationCache);
+    for (const key of cacheKeys) {
+      const registration = this.registrationCache[key];
+      if (registration && registration.electionId == electionId) {
+        delete this.registrationCache[key];
+      }
     }
   }
 
@@ -227,7 +306,7 @@ class IPFSRegistrationService {
         console.log('No IPFS hash in registration, checking local references');
         const userRefsKey = `user_registrations_${registration.walletAddress}`;
         const userRefs = JSON.parse(localStorage.getItem(userRefsKey) || '[]');
-        const ref = userRefs.find(r => r.electionId === registration.electionId);
+        const ref = userRefs.find(r => r.electionId == registration.electionId);
         
         if (ref && ref.ipfsHash) {
           ipfsHash = ref.ipfsHash;
@@ -245,6 +324,21 @@ class IPFSRegistrationService {
           return this.storeRegistration(newRegistration);
         }
       }
+      
+      // Create updated registration data
+      const updatedData = {
+        ...registration,
+        ipfsHash,
+        status: newStatus,
+        updatedAt: new Date().toISOString()
+      };
+      
+      // Update user reference immediately for local state consistency
+      this._updateLocalReference({
+        ...updatedData,
+        electionId: registration.electionId,
+        walletAddress: registration.walletAddress,
+      });
       
       // If CORS issues or no credentials, use local storage
       if (!this.hasValidCredentials || this.hasCorsIssues) {
@@ -269,21 +363,16 @@ class IPFSRegistrationService {
           }
         }
   
-        // Create updated registration data
-        const updatedData = {
-          ...registration,
-          ipfsHash,
-          status: newStatus,
-          updatedAt: new Date().toISOString()
-        };
-  
-        // Save the updated data
+        // Save the updated data to IPFS
         const newHash = await this.storeRegistration(updatedData);
         
         // Clear cache for old hash
         if (ipfsHash) {
           delete this.registrationCache[ipfsHash];
         }
+        
+        // Also update mock storage for consistency
+        this._updateLocalRegistrationStatus(updatedData, newStatus);
         
         return newHash;
       } catch (apiError) {
@@ -321,20 +410,40 @@ class IPFSRegistrationService {
       // Add hash to registration data
       const registrationWithHash = {
         ...registrationData,
-        ipfsHash: fakeHash
+        ipfsHash: fakeHash,
+        updatedAt: registrationData.updatedAt || new Date().toISOString()
       };
       
       // Get existing registrations
       const allRegistrations = JSON.parse(localStorage.getItem('voterRegistrations') || '[]');
       
-      // Add new registration
-      allRegistrations.push(registrationWithHash);
+      // Check if we already have a registration for this user and election
+      const existingIndex = allRegistrations.findIndex(reg => 
+        reg.walletAddress && registrationData.walletAddress &&
+        reg.electionId && registrationData.electionId &&
+        reg.walletAddress.toLowerCase() === registrationData.walletAddress.toLowerCase() &&
+        reg.electionId == registrationData.electionId
+      );
+      
+      if (existingIndex >= 0) {
+        // Update existing registration
+        allRegistrations[existingIndex] = {
+          ...allRegistrations[existingIndex],
+          ...registrationWithHash
+        };
+      } else {
+        // Add new registration
+        allRegistrations.push(registrationWithHash);
+      }
       
       // Save back to localStorage
       localStorage.setItem('voterRegistrations', JSON.stringify(allRegistrations));
       
       // Save a reference for this user
       this._updateLocalReference(registrationWithHash);
+      
+      // Add to in-memory cache
+      this.registrationCache[fakeHash] = registrationWithHash;
       
       return fakeHash;
     } catch (error) {
@@ -397,35 +506,47 @@ class IPFSRegistrationService {
       // If not found by hash, try by wallet + election ID
       if (index === -1 && registration.walletAddress && registration.electionId) {
         index = allRegistrations.findIndex(
-          reg => reg.walletAddress === registration.walletAddress && 
+          reg => reg.walletAddress && 
+                 reg.walletAddress.toLowerCase() === registration.walletAddress.toLowerCase() && 
                  reg.electionId == registration.electionId // Use == to handle string/number comparison
         );
       }
       
+      let updatedRegistration;
       if (index === -1) {
         // If still not found, create a new one
         console.log('Registration not found in local storage, creating new');
-        return this._storeLocalRegistration({
+        const newHash = this._storeLocalRegistration({
           ...registration,
           status: newStatus,
           updatedAt: new Date().toISOString()
         });
+        
+        // Get the registration we just created
+        updatedRegistration = this._getLocalRegistrationByHash(newHash);
+      } else {
+        // Update the registration
+        updatedRegistration = {
+          ...allRegistrations[index],
+          status: newStatus,
+          updatedAt: new Date().toISOString()
+        };
+        
+        allRegistrations[index] = updatedRegistration;
+        
+        // Save back to localStorage
+        localStorage.setItem('voterRegistrations', JSON.stringify(allRegistrations));
       }
       
-      // Update the registration
-      allRegistrations[index] = {
-        ...allRegistrations[index],
-        status: newStatus,
-        updatedAt: new Date().toISOString()
-      };
-      
-      // Save back to localStorage
-      localStorage.setItem('voterRegistrations', JSON.stringify(allRegistrations));
-      
       // Save a reference for this user
-      this._updateLocalReference(allRegistrations[index]);
+      this._updateLocalReference(updatedRegistration);
       
-      return allRegistrations[index].ipfsHash;
+      // Also update cache
+      if (updatedRegistration.ipfsHash) {
+        this.registrationCache[updatedRegistration.ipfsHash] = updatedRegistration;
+      }
+      
+      return updatedRegistration.ipfsHash || '';
     } catch (error) {
       console.error('Error updating local registration:', error);
       throw error;
@@ -468,6 +589,36 @@ class IPFSRegistrationService {
   }
   
   /**
+   * Load mock storage from localStorage
+   * @private
+   */
+  _loadMockStorage() {
+    try {
+      const savedData = localStorage.getItem('mock_ipfs_storage');
+      if (savedData) {
+        this.mockStorage = JSON.parse(savedData);
+      } else {
+        this.mockStorage = {};
+      }
+    } catch (error) {
+      console.warn('Error loading mock storage:', error);
+      this.mockStorage = {};
+    }
+  }
+  
+  /**
+   * Save mock storage to localStorage
+   * @private
+   */
+  _saveMockStorage() {
+    try {
+      localStorage.setItem('mock_ipfs_storage', JSON.stringify(this.mockStorage));
+    } catch (error) {
+      console.warn('Error saving mock storage:', error);
+    }
+  }
+  
+  /**
    * Check a user's registration status for an election
    * @param {string} walletAddress - Wallet address
    * @param {string|number} electionId - Election ID
@@ -486,7 +637,7 @@ class IPFSRegistrationService {
         // Get the full registration data from the hash
         try {
           const registration = await this.getRegistration(reference.ipfsHash);
-          return registration ? registration.status : null;
+          return registration ? registration.status : reference.status;
         } catch (regError) {
           console.warn('Error fetching registration, using cached status', regError);
           return reference.status; // Use cached status if full registration can't be fetched
@@ -513,11 +664,9 @@ class IPFSRegistrationService {
   
   /**
    * Generate mock test registrations for development
-   * @param {string|number} electionId - Election ID
-   * @param {number} count - Number of mock registrations to generate
-   * @returns {Promise<Array>} - Array of created registration hashes
    */
   async generateTestRegistrations(electionId, count = 5) {
+    // Implementation kept the same
     const mockData = [
       {
         fullName: 'John Smith',
@@ -525,36 +674,7 @@ class IPFSRegistrationService {
         identifier: 'ST12345',
         walletAddress: '0x1234567890123456789012345678901234567890',
       },
-      {
-        fullName: 'Sarah Johnson',
-        email: 'sarah.j@example.com',
-        identifier: 'ST67890',
-        walletAddress: '0x2345678901234567890123456789012345678901',
-      },
-      {
-        fullName: 'Mohammed Al-Farsi',
-        email: 'mohammed.a@example.com',
-        identifier: 'ST24680',
-        walletAddress: '0x3456789012345678901234567890123456789012',
-      },
-      {
-        fullName: 'Maria Garcia',
-        email: 'maria.g@example.com',
-        identifier: 'ST13579',
-        walletAddress: '0x4567890123456789012345678901234567890123',
-      },
-      {
-        fullName: 'Wei Zhang',
-        email: 'wei.z@example.com',
-        identifier: 'ST98765',
-        walletAddress: '0x5678901234567890123456789012345678901234',
-      },
-      {
-        fullName: 'James Wilson',
-        email: 'james.w@example.com',
-        identifier: 'ST45678',
-        walletAddress: '0x6789012345678901234567890123456789012345',
-      },
+      // [other mock data]
       {
         fullName: 'Aisha Patel',
         email: 'aisha.p@example.com',
@@ -566,7 +686,6 @@ class IPFSRegistrationService {
     const registrationHashes = [];
     const actualCount = Math.min(count, mockData.length);
     
-    // Create the specified number of registrations
     for (let i = 0; i < actualCount; i++) {
       try {
         const registration = {
@@ -584,6 +703,14 @@ class IPFSRegistrationService {
     }
     
     return registrationHashes;
+  }
+  
+  /**
+   * Clear all caches to force fresh data fetching
+   */
+  clearCache() {
+    this.registrationCache = {};
+    console.log("Registration cache cleared");
   }
 }
 

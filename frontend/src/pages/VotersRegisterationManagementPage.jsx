@@ -6,6 +6,7 @@ import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import useElections from '../hooks/useElections';
 import { useWeb3 } from '../contexts/Web3Context';
+import { useVoterRegistration } from '../contexts/VoterRegistrationContext';
 import IPFSRegistrationService from '../services/ipfsRegistrationService';
 
 // Define a proxy service for handling CORS issues (only in development)
@@ -17,7 +18,8 @@ const VoterRegistrationManagementPage = () => {
     const { electionId } = useParams();
     const navigate = useNavigate();
     const { account } = useWeb3();
-    const { allElections, addAllowedVoter, refreshElections } = useElections();
+    const { allElections, refreshElections } = useElections();
+    const { addAllowedVoter } = useVoterRegistration();
     
     // Initialize IPFS service
     const ipfsService = new IPFSRegistrationService();
@@ -75,11 +77,14 @@ const VoterRegistrationManagementPage = () => {
         setFilteredRegistrations(filtered);
     }, [registrations, searchTerm, viewOption]);
     
-    // Load all registrations for this election using CORS proxy if needed
+    // Load all registrations for this election
     const loadRegistrations = async () => {
         try {
             setIsLoading(true);
             setStatusMessage(null);
+            
+            // Clear IPFS service cache to ensure fresh data
+            ipfsService.clearCache();
             
             // Fetch registrations from IPFS
             const fetchedRegistrations = await ipfsService.getElectionRegistrations(electionId);
@@ -122,7 +127,7 @@ const VoterRegistrationManagementPage = () => {
         }
     }, [electionId]);
     
-    // Handle approval of a registration
+    // Handle approval of a registration with blockchain verification
     const handleApproveRegistration = async (registration) => {
         if (processingIds.has(registration.walletAddress)) {
             return; // Prevent multiple submissions
@@ -132,20 +137,17 @@ const VoterRegistrationManagementPage = () => {
             // Add to processing set
             setProcessingIds(prev => new Set([...prev, registration.walletAddress]));
             
-            // Update registration status in IPFS via Pinata
-            await ipfsService.updateRegistrationStatus(registration, 'approved');
-            
-            // THIS IS THE CRITICAL PART - Add the voter to the blockchain
+            // First add the voter to the blockchain
             const blockchainSuccess = await addAllowedVoter(electionId, registration.walletAddress);
             
             if (!blockchainSuccess) {
-                // If blockchain registration fails, show warning but continue
-                console.warn(`Blockchain registration failed for ${registration.walletAddress}`);
-                setStatusMessage({
-                    type: 'warning',
-                    message: `Approved ${registration.fullName}'s registration but blockchain registration may have failed. They might not be able to vote.`
-                });
+                throw new Error('Failed to add voter to blockchain');
             }
+            
+            console.log(`Successfully added ${registration.walletAddress} to blockchain for election ${electionId}`);
+            
+            // Update registration status in IPFS via Pinata
+            await ipfsService.updateRegistrationStatus(registration, 'approved');
             
             // Update local state for UI
             setRegistrations(prev => 
@@ -438,6 +440,16 @@ const VoterRegistrationManagementPage = () => {
                     </Button>
                 </div>
                 
+                <div className="mt-4 p-3 bg-blue-50 rounded-md border border-blue-200">
+                    <div className="flex items-start">
+                        <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+                        <div className="text-sm text-blue-800">
+                            <h3 className="font-bold mb-1">Important:</h3>
+                            <p>After approving a voter registration, they will be added to the blockchain's allowedVoters list. Make sure to verify their identity before approval.</p>
+                        </div>
+                    </div>
+                </div>
+                
                 {/* Add option for testing */}
                 {process.env.NODE_ENV === 'development' && (
                     <div className="mt-4 p-3 bg-yellow-50 rounded-md border border-yellow-200">
@@ -656,6 +668,46 @@ const VoterRegistrationManagementPage = () => {
                         </table>
                     </div>
                 )}
+            </Card>
+            
+            {/* Instructions for troubleshooting */}
+            <Card className="mt-6">
+                <h3 className="text-lg font-medium text-gray-800 mb-4">Troubleshooting Voter Access</h3>
+                
+                <div className="bg-gray-50 p-4 rounded-md mb-4">
+                    <h4 className="font-medium text-gray-700 mb-2">If approved voters cannot access the election:</h4>
+                    <ol className="list-decimal pl-5 space-y-2 text-gray-600">
+                        <li>Make sure your wallet is connected and using the same account that was registered</li>
+                        <li>Try refreshing the dashboard page to reload registration data</li>
+                        <li>Verify that the election hasn't ended</li>
+                        <li>Check that the voter's blockchain transaction was successful</li>
+                    </ol>
+                </div>
+                
+                <div className="bg-yellow-50 p-4 rounded-md mb-4">
+                    <div className="flex items-start">
+                        <AlertTriangle size={20} className="text-yellow-600 mr-3 mt-1 flex-shrink-0" />
+                        <div>
+                            <h4 className="font-medium text-yellow-800 mb-1">Important Note:</h4>
+                            <p className="text-yellow-700">
+                                Approving a voter requires two steps:
+                                <ol className="list-decimal pl-5 mt-2">
+                                    <li>Adding the voter to the blockchain's allowed voters list</li>
+                                    <li>Updating the registration status in the database</li>
+                                </ol>
+                                Both steps must complete successfully for voters to have access.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+                
+                <Button
+                    variant="primary"
+                    onClick={() => refreshElections()}
+                    className="mt-2"
+                >
+                    Refresh Election Data
+                </Button>
             </Card>
         </DashboardLayout>
     );
