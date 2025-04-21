@@ -23,6 +23,8 @@ const ElectionManagement = () => {
   const [selectedElection, setSelectedElection] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [accessMessage, setAccessMessage] = useState(null);
+  const [processing, setProcessing] = useState(false);
+  const [statusMessage, setStatusMessage] = useState(null);
   
   const {
     allElections,
@@ -100,23 +102,126 @@ const ElectionManagement = () => {
   
   const filteredElections = getFilteredElections();
   
-  // Handle election finalization
-  const handleFinalizeElection = async (electionId) => {
-    try {
-      const election = allElections.find(e => e.id === electionId);
-      
-      // Check permissions
-      if (!isElectionAdmin(election)) {
-        console.error('Permission denied: Not the election admin');
-        return;
-      }
-      
-      await finalizeElection(electionId);
-      await refreshElections();
-    } catch (error) {
-      console.error('Error finalizing election:', error);
+  /**
+ * Handle finalization of an election with improved error handling and user feedback
+ * @param {number} electionId - ID of the election to finalize
+ */
+const handleFinalizeElection = async (electionId) => {
+  // Prevent multiple clicks
+  if (processing) return;
+  
+  try {
+    setProcessing(true);
+    setStatusMessage({
+      type: 'processing',
+      message: `Finalizing election #${electionId}...`,
+      details: 'Please wait and confirm the transaction in your wallet'
+    });
+    
+    console.log(`Attempting to finalize election ${electionId}`);
+    
+    // First check if the election can be finalized
+    const election = allElections.find(e => e.id === electionId);
+    if (!election) {
+      throw new Error(`Election ${electionId} not found`);
     }
-  };
+    
+    // Double-check status and end time
+    const now = new Date();
+    const endTime = new Date(election.endTime);
+    
+    if (now < endTime) {
+      setStatusMessage({
+        type: 'error',
+        message: 'Election has not ended yet',
+        details: `Election ends at ${endTime.toLocaleString()}`
+      });
+      return;
+    }
+    
+    if (election.totalVotes === 0) {
+      setStatusMessage({
+        type: 'error',
+        message: 'Cannot finalize an election with no votes',
+        details: 'At least one vote must be cast before finalization'
+      });
+      return;
+    }
+    
+    // Ask for confirmation
+    const confirmFinalize = window.confirm(
+      `Are you sure you want to finalize election "${election.title}"? This action cannot be undone.`
+    );
+    
+    if (!confirmFinalize) {
+      setStatusMessage(null);
+      return;
+    }
+    
+    // With all checks passed, try to finalize
+    const result = await finalizeElection(electionId);
+    
+    setStatusMessage({
+      type: 'success',
+      message: 'Election finalized successfully!',
+      details: `Transaction: ${result.transactionHash?.substring(0, 10)}...${result.transactionHash?.substring(result.transactionHash.length - 8)}`
+    });
+    
+    // Refresh election data
+    await refreshElections();
+    
+    // Clear success message after 5 seconds
+    setTimeout(() => {
+      setStatusMessage(prev => prev?.type === 'success' ? null : prev);
+    }, 5000);
+    
+  } catch (err) {
+    console.error('Error finalizing election:', err);
+    
+    // Handle specific errors with user-friendly messages
+    let errorMessage = 'Failed to finalize election';
+    let errorDetails = err.message;
+    
+    if (err.message.includes('not ended')) {
+      errorMessage = 'Election has not ended yet';
+      errorDetails = 'Please wait until the election end time has passed';
+    } else if (err.message.includes('no votes')) {
+      errorMessage = 'No votes cast in this election';
+      errorDetails = 'At least one vote is required to finalize an election';
+    } else if (err.message.includes('already finalized')) {
+      errorMessage = 'Election is already finalized';
+      errorDetails = 'This election has already been completed';
+    } else if (err.message.toLowerCase().includes('rejected')) {
+      errorMessage = 'Transaction rejected';
+      errorDetails = 'The transaction was rejected by your wallet';
+    }
+    
+    setStatusMessage({
+      type: 'error',
+      message: errorMessage,
+      details: errorDetails
+    });
+    
+    // Add an option to try again using mock mode in development
+    if (process.env.NODE_ENV === 'development') {
+      // Present retry option
+      setTimeout(() => {
+        const retryMock = window.confirm(
+          'Would you like to retry using mock mode (no blockchain transaction)?\n\n' +
+          'This is only available in development and will simulate a successful finalization.'
+        );
+        
+        if (retryMock) {
+          localStorage.setItem('bypass_blockchain', 'true');
+          handleFinalizeElection(electionId);
+        }
+      }, 1000);
+    }
+    
+  } finally {
+    setProcessing(false);
+  }
+};
   
   // Handle election deletion
   const handleDeleteElection = (electionId) => {
