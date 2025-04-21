@@ -3,24 +3,32 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Award, Users, CheckCircle, AlertTriangle } from 'lucide-react';
 import { useWeb3 } from '../contexts/Web3Context';
 import useElections from '../hooks/useElections';
-import useVoterRegistration from '../hooks/useVoterRegistration';
+import { useVoterRegistration } from '../contexts/VoterRegistrationContext';
 import DashboardLayout from '../layouts/DashboardLayout';
 import useDirectContract from '../hooks/useDirectContract';
 import DebugPanel from '../components/debug/DebugPanel';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
+import { useAuth } from '../contexts/AuthContext';
 
 const ResultsPage = () => {
   const { electionId } = useParams();
   const navigate = useNavigate();
   const { account } = useWeb3();
+  const { isAdmin } = useAuth();
   const { allElections, refreshElections, finalizeElection, isLoading, error } = useElections();
-  const { isRegisteredForElection, isLoading: registrationLoading } = useVoterRegistration();
+  const { isRegisteredForElection, universalAccess } = useVoterRegistration();
   
   const [election, setElection] = useState(null);
   const [isOwner, setIsOwner] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState(null);
+  const [accessBypass, setAccessBypass] = useState(false);
+  
+  const {
+    getAllCandidates: getDirectCandidates,
+    error: directContractError
+  } = useDirectContract(process.env.REACT_APP_CONTRACT_ADDRESS);
   
   // Find the election in our data
   useEffect(() => {
@@ -45,6 +53,14 @@ const ResultsPage = () => {
   
   // Handle finalize election
   const handleFinalizeElection = async () => {
+    if (!isOwner && !isAdmin) {
+      setStatusMessage({
+        type: 'error',
+        message: 'You do not have permission to finalize this election.'
+      });
+      return;
+    }
+    
     try {
       setProcessing(true);
       setStatusMessage({
@@ -74,29 +90,7 @@ const ResultsPage = () => {
     }
   };
   
-  // Sort candidates by vote count (descending)
-  const sortedCandidates = election?.candidates 
-    ? [...election.candidates].sort((a, b) => b.voteCount - a.voteCount) 
-    : [];
-  
-  // Find the winning candidate
-  const winningCandidate = sortedCandidates.length > 0 ? sortedCandidates[0] : null;
-  
-  // Calculate total votes and percentages
-  const totalVotes = election?.totalVotes || 0;
-  
-  // Format the percentage with proper handling of zero total votes
-  const getVotePercentage = (voteCount) => {
-    if (totalVotes === 0) return 0;
-    return ((voteCount / totalVotes) * 100).toFixed(1);
-  };
-
-  const {
-    getAllCandidates: getDirectCandidates,
-    error: directContractError
-  } = useDirectContract(process.env.REACT_APP_CONTRACT_ADDRESS);
-
-  // Add this function inside your ResultsPage component
+  // Force refresh candidates from blockchain
   const forceRefreshCandidates = async () => {
     if (!election || !electionId) return;
     
@@ -119,22 +113,44 @@ const ResultsPage = () => {
       console.error('Error in direct candidate fetch:', err);
     }
   };
-
-  // Check if user has access to this election (must be admin or registered voter)
-  const hasAccess = () => {
-    if (isOwner && !isOwner) return true; // Admin always has access
-    return isRegisteredForElection(electionId); // Regular users need to be registered
-  };
-
-  // Add useEffect to check candidates when election is loaded
-  useEffect(() => {
-    if (election && (!election.candidates || election.candidates.length === 0) && election.candidateCount > 0) {
-      console.log('Election has candidates in contract but none loaded. Trying direct fetch...');
-      forceRefreshCandidates();
-    }
-  }, [election, electionId]);
   
-  if (isLoading || registrationLoading) {
+  // Check if user has access to view results
+  const hasAccessToResults = () => {
+    // Admins always have access
+    if (isOwner || isAdmin) return true;
+    
+    // Universal access in dev mode
+    if (universalAccess || accessBypass) return true;
+    
+    // Check if user is registered for this election
+    return isRegisteredForElection(electionId);
+  };
+  
+  // Enable access bypass (development mode only)
+  const enableAccessBypass = () => {
+    console.log("⚠️ ACCESS RESTRICTIONS BYPASSED - FOR DEVELOPMENT ONLY");
+    setAccessBypass(true);
+  };
+  
+  // Sort candidates by vote count (descending)
+  const sortedCandidates = election?.candidates 
+    ? [...election.candidates].sort((a, b) => b.voteCount - a.voteCount) 
+    : [];
+  
+  // Find the winning candidate
+  const winningCandidate = sortedCandidates.length > 0 ? sortedCandidates[0] : null;
+  
+  // Calculate total votes and percentages
+  const totalVotes = election?.totalVotes || 0;
+  
+  // Format the percentage with proper handling of zero total votes
+  const getVotePercentage = (voteCount) => {
+    if (totalVotes === 0) return 0;
+    return ((voteCount / totalVotes) * 100).toFixed(1);
+  };
+  
+  // Loading state
+  if (isLoading) {
     return (
       <DashboardLayout>
         <div className="flex justify-center items-center h-64">
@@ -144,10 +160,20 @@ const ResultsPage = () => {
     );
   }
   
-  /*// Access denied check
-  if (!hasAccess()) {
+  // Access denied check - if not access bypass mode and not registered
+  if (!hasAccessToResults()) {
     return (
       <DashboardLayout>
+        <div className="mb-6 flex items-center justify-between">
+          <button 
+            onClick={() => navigate('/dashboard')} 
+            className="flex items-center text-indigo-600 hover:text-indigo-800"
+          >
+            <ArrowLeft size={16} className="mr-1" />
+            <span>Back to Dashboard</span>
+          </button>
+        </div>
+        
         <Card className="bg-red-50 border-red-200">
           <div className="flex items-start">
             <AlertTriangle className="mr-3 mt-0.5 text-red-600" size={20} />
@@ -156,6 +182,7 @@ const ResultsPage = () => {
               <p className="text-red-700">You are not registered for this election and cannot view its results.</p>
             </div>
           </div>
+          
           <Button 
             variant="primary"
             className="mt-6"
@@ -163,11 +190,22 @@ const ResultsPage = () => {
           >
             Return to Dashboard
           </Button>
+          
+          {process.env.NODE_ENV === 'development' && (
+            <Button 
+              variant="secondary"
+              className="mt-4"
+              onClick={enableAccessBypass}
+            >
+              Bypass Access Check (Dev Only)
+            </Button>
+          )}
         </Card>
       </DashboardLayout>
     );
-  }*/
+  }
   
+  // Error state or election not found
   if (error || !election) {
     return (
       <DashboardLayout>
@@ -219,8 +257,23 @@ const ResultsPage = () => {
         </div>
       </div>
       
+      {/* Dev Mode Indicator */}
+      {(accessBypass || universalAccess) && process.env.NODE_ENV === 'development' && (
+        <Card className="mb-6 bg-yellow-50 border-yellow-200">
+          <div className="flex items-start">
+            <AlertTriangle className="mr-3 mt-0.5 text-yellow-600" size={20} />
+            <div>
+              <h3 className="font-bold text-yellow-800">Development Mode</h3>
+              <p className="text-yellow-700">
+                Access restrictions have been bypassed. In production, only registered voters and admins can view results.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      
       {/* Registration status indicator for non-admin users */}
-      {!isOwner && (
+      {!isOwner && !isAdmin && !accessBypass && !universalAccess && (
         <Card className="mb-6 bg-blue-50 border-blue-200">
           <div className="flex items-start">
             <CheckCircle size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
@@ -342,7 +395,7 @@ const ResultsPage = () => {
       </div>
       
       {/* Finalize Button (only for admins and unfinalized ended elections) */}
-      {isOwner && election.status === 'ended' && !election.finalized && (
+      {(isOwner || isAdmin) && election.status === 'ended' && !election.finalized && (
         <div className="bg-white rounded-lg shadow-sm p-6">
           <div className="flex items-start">
             <div className="flex-1">
@@ -403,7 +456,12 @@ const ResultsPage = () => {
           </div>
         )}
       </div>
-      {isOwner && election && <DebugPanel election={election} refreshData={forceRefreshCandidates} />}
+      
+      {/* Debug Panel (Only available for admins in development mode) */}
+      {(isOwner || isAdmin || accessBypass || universalAccess) && 
+       process.env.NODE_ENV === 'development' && 
+       election && 
+       <DebugPanel election={election} refreshData={forceRefreshCandidates} />}
     </DashboardLayout>
   );
 };

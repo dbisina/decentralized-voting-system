@@ -11,6 +11,7 @@ import useElections from '../hooks/useElections';
 import useVote from '../hooks/useVote';
 import { timeRemaining, formatDate } from '../utils/dateUtils';
 import { useWeb3 } from '../contexts/Web3Context';
+import { useVoterRegistration } from '../contexts/VoterRegistrationContext';
 import { Check } from 'lucide-react';
 
 const VoteCastingPage = () => {
@@ -18,6 +19,7 @@ const VoteCastingPage = () => {
   const navigate = useNavigate();
   const { account } = useWeb3();
   const { allElections, refreshElections, isLoading: electionsLoading } = useElections();
+  const { isRegisteredForElection, universalAccess } = useVoterRegistration();
   
   const [election, setElection] = useState(null);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -110,6 +112,24 @@ const VoteCastingPage = () => {
     return election.candidates.find(c => c.id === selectedCandidate);
   };
   
+  // Check if user is admin of this election
+  const isElectionAdmin = () => {
+    if (!election || !account) return false;
+    return election.admin && account.toLowerCase() === election.admin.toLowerCase();
+  };
+  
+  // Check if user has access to vote in this election
+  const hasAccessToVote = () => {
+    // Admin always has access
+    if (isElectionAdmin()) return true;
+    
+    // Dev mode bypass
+    if (accessBypass || universalAccess) return true;
+    
+    // Regular users need to be registered
+    return isRegisteredForElection(electionId);
+  };
+  
   // Loading state
   if (isLoading || electionsLoading) {
     return (
@@ -161,6 +181,57 @@ const VoteCastingPage = () => {
   // Check if election is active
   const isElectionActive = election.status === 'active';
   
+  // Access denied state - user not registered
+  if (!hasAccessToVote() && votingStep !== 'success') {
+    return (
+      <DashboardLayout>
+        <div className="mb-6 flex items-center justify-between">
+          <Button 
+            variant="secondary"
+            size="sm"
+            onClick={handleReturnToDashboard}
+            className="flex items-center"
+          >
+            <ArrowLeft size={16} className="mr-1" />
+            <span>Back to Dashboard</span>
+          </Button>
+          
+          <StatusBadge status={election.status} large />
+        </div>
+        
+        <Card className="bg-red-50 border-red-200">
+          <div className="flex items-start">
+            <AlertTriangle className="mr-3 mt-0.5 text-red-600" size={20} />
+            <div>
+              <h3 className="font-bold text-red-800">Access Denied</h3>
+              <p className="text-red-700">
+                You are not registered to vote in this election. Please contact the election administrator for access.
+              </p>
+            </div>
+          </div>
+          
+          <Button 
+            variant="primary"
+            className="mt-6"
+            onClick={handleReturnToDashboard}
+          >
+            Return to Dashboard
+          </Button>
+          
+          {process.env.NODE_ENV === 'development' && (
+            <Button
+              variant="secondary"
+              onClick={enableAccessBypass}
+              className="mt-4"
+            >
+              Bypass Access Check (Dev Only)
+            </Button>
+          )}
+        </Card>
+      </DashboardLayout>
+    );
+  }
+  
   // Already voted state
   if (hasVoted && votingStep !== 'success') {
     return (
@@ -201,7 +272,7 @@ const VoteCastingPage = () => {
   }
   
   // Inactive election state
-  if (!isElectionActive && votingStep !== 'success') {
+  if (!isElectionActive && votingStep !== 'success' && !accessBypass) {
     return (
       <DashboardLayout>
         <div className="mb-6 flex items-center justify-between">
@@ -310,7 +381,7 @@ const VoteCastingPage = () => {
           </div>
         </div>
         
-        {accessBypass && (
+        {(accessBypass || universalAccess) && (
           <Card className="mb-4 bg-yellow-50 border-yellow-200">
             <div className="flex items-start">
               <AlertTriangle size={20} className="text-yellow-600 mr-3 mt-1 flex-shrink-0" />
@@ -384,23 +455,24 @@ const VoteCastingPage = () => {
           </div>
         </Card>
         
-        {/* Status Panel */}
-        <Card className="mt-6 bg-blue-50 border-blue-200">
-          <div className="flex items-start">
-            <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
-            <div>
-              <h3 className="font-bold text-gray-800 mb-2">Development Mode Information</h3>
-              <p className="text-gray-700 mb-2">
-                All registration checks have been temporarily disabled to facilitate testing.
-              </p>
-              <ul className="list-disc pl-5 space-y-1 text-gray-600">
-                <li>You can vote regardless of registration status</li>
-                <li>Inactive elections can be accessed with the bypass button</li>
-                <li>Your votes will still be recorded on the blockchain</li>
-              </ul>
+        {(accessBypass || universalAccess) && (
+          <Card className="mt-6 bg-blue-50 border-blue-200">
+            <div className="flex items-start">
+              <Info size={20} className="text-blue-600 mr-3 mt-1 flex-shrink-0" />
+              <div>
+                <h3 className="font-bold text-gray-800 mb-2">Development Mode Information</h3>
+                <p className="text-gray-700 mb-2">
+                  All registration checks have been temporarily disabled to facilitate testing.
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-gray-600">
+                  <li>You can vote regardless of registration status</li>
+                  <li>Inactive elections can be accessed with the bypass button</li>
+                  <li>Your votes will still be recorded on the blockchain</li>
+                </ul>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        )}
       </DashboardLayout>
     );
   }

@@ -9,6 +9,7 @@ import Card from '../common/Card';
 import { useWeb3 } from '../../contexts/Web3Context';
 import { useVoterRegistration } from '../../contexts/VoterRegistrationContext';
 import IPFSRegistrationService from '../../services/ipfsRegistrationService';
+import { useAuth } from '../../contexts/AuthContext';
 
 /**
  * Enhanced Voter Management Component
@@ -24,10 +25,12 @@ const EnhancedVoterManagement = ({
   onNavigate
 }) => {
   const { account } = useWeb3();
+  const { isAdmin: isGlobalAdmin } = useAuth();
   const { 
     addAllowedVoter, 
     rejectVoterRegistration, 
-    refreshRegistrations 
+    refreshRegistrations,
+    universalAccess 
   } = useVoterRegistration();
   
   const [registrations, setRegistrations] = useState([]);
@@ -43,6 +46,26 @@ const EnhancedVoterManagement = ({
   
   // Initialize IPFS service
   const ipfsService = new IPFSRegistrationService();
+
+  // Check if the user has admin access - either election admin or global admin
+  const hasAdminAccess = () => {
+    // In development with universal access, grant admin rights
+    if (universalAccess && process.env.NODE_ENV === 'development') {
+      return true;
+    }
+    
+    // Check if user is the specific election admin
+    if (isAdmin) {
+      return true;
+    }
+    
+    // Check if user is a global admin
+    if (isGlobalAdmin) {
+      return true;
+    }
+    
+    return false;
+  };
   
   // Load registrations for the election
   useEffect(() => {
@@ -98,7 +121,7 @@ const EnhancedVoterManagement = ({
     
     // Apply status filter
     if (filterStatus !== 'all') {
-      filtered = filtered.filter(reg => reg.status.toLowerCase() === filterStatus.toLowerCase());
+      filtered = filtered.filter(reg => reg.status?.toLowerCase() === filterStatus.toLowerCase());
     }
     
     // Apply search filter
@@ -117,7 +140,7 @@ const EnhancedVoterManagement = ({
   
   // Handle approval of a single registration
   const handleApproveRegistration = async (registration) => {
-    if (!isAdmin) {
+    if (!hasAdminAccess()) {
       setStatusMessage({
         type: 'error',
         message: 'You do not have permission to approve registrations'
@@ -165,7 +188,7 @@ const EnhancedVoterManagement = ({
   
   // Handle rejection of a single registration
   const handleRejectRegistration = async (registration) => {
-    if (!isAdmin) {
+    if (!hasAdminAccess()) {
       setStatusMessage({
         type: 'error',
         message: 'You do not have permission to reject registrations'
@@ -213,7 +236,7 @@ const EnhancedVoterManagement = ({
   
   // Handle batch approval/rejection
   const handleBatchAction = async (action) => {
-    if (selectedRegistrations.size === 0 || !isAdmin) return;
+    if (selectedRegistrations.size === 0 || !hasAdminAccess()) return;
     
     try {
       setProcessingBatch(true);
@@ -395,7 +418,7 @@ const EnhancedVoterManagement = ({
   };
   
   // If not admin, show access denied
-  if (!isAdmin) {
+  if (!hasAdminAccess()) {
     return (
       <Card className="bg-red-50 border-red-200">
         <div className="flex items-start">
@@ -427,6 +450,21 @@ const EnhancedVoterManagement = ({
   
   return (
     <div>
+      {/* Universal Access Warning */}
+      {universalAccess && process.env.NODE_ENV === 'development' && (
+        <Card className="mb-6 bg-yellow-50 border-yellow-200">
+          <div className="flex items-start">
+            <AlertTriangle size={20} className="text-yellow-600 mr-3 mt-1 flex-shrink-0" />
+            <div>
+              <h3 className="font-bold text-yellow-800 mb-1">Development Mode Active</h3>
+              <p className="text-yellow-700">
+                Universal access is enabled. All access controls are bypassed in this mode.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <Card>
@@ -727,6 +765,35 @@ const EnhancedVoterManagement = ({
                   
                   return (
                     <tr key={index} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {registration.status === 'pending' && (
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                            checked={selectedRegistrations.has(registration.walletAddress)}
+                            onChange={() => toggleSelection(registration.walletAddress)}
+                          />
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">{registration.fullName}</div>
+                            <div className="text-sm text-gray-500">{registration.email}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <span className="font-mono text-sm text-gray-500">
+                            {registration.walletAddress?.slice(0, 6)}...{registration.walletAddress?.slice(-4)}
+                          </span>
+                          <ExternalLink size={14} className="ml-2 text-gray-400" />
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {registration.timestamp ? new Date(registration.timestamp).toLocaleString() : 'N/A'}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusColor(registration.status)}`}>
                           {registration.status || 'pending'}

@@ -4,7 +4,7 @@ import VotingSystemABI from '../contracts/DecentralizedVotingSystem.json';
 
 // Contract addresses for different networks
 const CONTRACT_ADDRESSES = {
-  1337: '0x5efdf210a1554a5d6b0c98c41513e951c7c4dbac' // Local development
+  1337: '0x7adb4ef739aed028d331e51084e1abc4a329adab' // Local development
 };
 
 // The default network ID for development

@@ -94,7 +94,7 @@ const ElectionCard = ({
             <div className="mt-4">
               <div className="flex justify-between text-xs text-gray-500 mb-1">
                 <span>Voter Participation</span>
-                <span>{formatPercentage(progress)}%</span>
+                {/*<span>{formatPercentage(progress)}%</span>*/}
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div 

@@ -11,15 +11,18 @@ import { useAuth } from '../contexts/AuthContext';
 import { useWeb3 } from '../contexts/Web3Context';
 import { formatDate } from '../utils/dateUtils';
 import { formatAddress } from '../utils/formatters';
+import { useVoterRegistration } from '../contexts/VoterRegistrationContext';
 
 const ElectionManagement = () => {
   const navigate = useNavigate();
   const { user, isAdmin } = useAuth();
   const { account } = useWeb3();
   const { getExplorerUrl } = useBlockchain();
+  const { universalAccess } = useVoterRegistration();
   const [activeTab, setActiveTab] = useState('all');
   const [selectedElection, setSelectedElection] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [accessMessage, setAccessMessage] = useState(null);
   
   const {
     allElections,
@@ -33,6 +36,22 @@ const ElectionManagement = () => {
     refreshElections
   } = useElections();
   
+  // Check if user has admin rights for an election
+  const isElectionAdmin = (election) => {
+    if (!election || !account) return false;
+    
+    // Super admin has access to all elections
+    if (isAdmin()) return true;
+    
+    // In development mode with universal access, grant admin rights
+    if (universalAccess && process.env.NODE_ENV === 'development') {
+      return true;
+    }
+    
+    // Check if user is the election admin
+    return election.admin && election.admin.toLowerCase() === account.toLowerCase();
+  };
+  
   // Filter elections that the current user is admin for
   const filterUserElections = (elections) => {
     if (!account) return [];
@@ -41,10 +60,27 @@ const ElectionManagement = () => {
       // Admin can see all elections
       if (isAdmin()) return true;
       
+      // In development mode with universal access, show all elections
+      if (universalAccess && process.env.NODE_ENV === 'development') {
+        return true;
+      }
+      
       // Otherwise only show elections created by the user
       return election.admin && election.admin.toLowerCase() === account.toLowerCase();
     });
   };
+  
+  // Check universal access mode on component mount
+  useEffect(() => {
+    if (universalAccess && process.env.NODE_ENV === 'development') {
+      setAccessMessage({
+        type: 'warning',
+        message: 'Universal Access Mode is enabled. All access controls are bypassed in this mode.'
+      });
+    } else {
+      setAccessMessage(null);
+    }
+  }, [universalAccess]);
   
   // Get filtered elections based on active tab
   const getFilteredElections = () => {
@@ -67,6 +103,14 @@ const ElectionManagement = () => {
   // Handle election finalization
   const handleFinalizeElection = async (electionId) => {
     try {
+      const election = allElections.find(e => e.id === electionId);
+      
+      // Check permissions
+      if (!isElectionAdmin(election)) {
+        console.error('Permission denied: Not the election admin');
+        return;
+      }
+      
       await finalizeElection(electionId);
       await refreshElections();
     } catch (error) {
@@ -76,12 +120,27 @@ const ElectionManagement = () => {
   
   // Handle election deletion
   const handleDeleteElection = (electionId) => {
+    const election = allElections.find(e => e.id === electionId);
+    
+    // Check permissions
+    if (!isElectionAdmin(election)) {
+      console.error('Permission denied: Not the election admin');
+      return;
+    }
+    
     setConfirmDelete(electionId);
   };
   
+  // Navigate to voter registration management
   const handleManageRegistrations = (electionId) => {
     navigate(`/manage-registrations/${electionId}`);
   };
+  
+  // Navigate to enhanced voter management
+  const handleEnhancedVoterManagement = (electionId) => {
+    navigate(`/enhanced-voter-management/${electionId}`);
+  };
+  
   // Confirm election deletion
   const confirmDeleteElection = async () => {
     try {
@@ -108,12 +167,33 @@ const ElectionManagement = () => {
   
   // Edit election
   const handleEditElection = (electionId) => {
+    const election = allElections.find(e => e.id === electionId);
+    
+    // Check permissions
+    if (!isElectionAdmin(election)) {
+      console.error('Permission denied: Not the election admin');
+      return;
+    }
+    
     navigate(`/edit-election/${electionId}`);
   };
   
   // View election results
   const handleViewResults = (electionId) => {
     navigate(`/election/${electionId}`);
+  };
+  
+  // Manage candidates
+  const handleManageCandidates = (electionId) => {
+    const election = allElections.find(e => e.id === electionId);
+    
+    // Check permissions
+    if (!isElectionAdmin(election)) {
+      console.error('Permission denied: Not the election admin');
+      return;
+    }
+    
+    navigate(`/manage-candidates/${electionId}`);
   };
   
   // Get contract explorer URL
@@ -135,6 +215,18 @@ const ElectionManagement = () => {
           <span>Create New Election</span>
         </Button>
       </div>
+      
+      {/* Universal Access Warning */}
+      {accessMessage && (
+        <Card className="mb-6 bg-yellow-50 border-yellow-200">
+          <div className="flex items-start">
+            <AlertCircle className="mr-3 mt-0.5 text-yellow-600" size={20} />
+            <div>
+              <h3 className="font-bold text-yellow-800">{accessMessage.message}</h3>
+            </div>
+          </div>
+        </Card>
+      )}
       
       {error && (
         <Card className="mb-6 bg-red-50 border-red-200">
@@ -298,11 +390,9 @@ const ElectionManagement = () => {
                           >
                             <Info size={16} />
                           </Button>
-
-      
                         )}
                         
-                        {election.status === 'ended' && !election.finalized && (
+                        {election.status === 'ended' && !election.finalized && isElectionAdmin(election) && (
                           <Button
                             variant="primary"
                             size="sm"
@@ -313,7 +403,7 @@ const ElectionManagement = () => {
                           </Button>
                         )}
                         
-                        {election.status === 'upcoming' && (
+                        {election.status === 'upcoming' && isElectionAdmin(election) && (
                         <>
                           <Button
                             variant="outline"
@@ -332,12 +422,11 @@ const ElectionManagement = () => {
                             <Trash2 size={16} />
                           </Button>
                           
-                          {/* Add this new button for managing candidates */}
                           <Button
                             variant="secondary"
                             size="sm"
-                            onClick={() => navigate(`/manage-candidates/${election.id.toString()}`)}
-                            className="px-2 py-1 ml-1"
+                            onClick={() => handleManageCandidates(election.id)}
+                            className="px-2 py-1"
                           >
                             <UserPlus size={16} />
                           </Button>
@@ -345,22 +434,22 @@ const ElectionManagement = () => {
                           <Button
                             variant="primary"
                             size="sm"
-                            onClick={() => navigate(`/enhanced-voter-management/${election.id.toString()}`)}
+                            onClick={() => handleEnhancedVoterManagement(election.id)}
                             className="ml-2 flex items-center"
                           >
                             <Shield size={16} className="mr-1" />
-                            Enhanced Access Control
+                            Enhanced Access
                           </Button>
 
                 
                           <Button
                             variant="secondary"
                             size="sm"
-                            onClick={() => navigate(`/manage-registrations/${election.id.toString()}`)}
+                            onClick={() => handleManageRegistrations(election.id)}
                             className="ml-2 flex items-center"
                           >
                             <Users size={16} className="mr-1" />
-                            Basic Voter Management
+                            Basic Management
                           </Button>
                         </>
                       )}
@@ -374,8 +463,6 @@ const ElectionManagement = () => {
                         >
                           <ChevronDown size={16} />
                         </Button>
-
-              
                       </div>
                     </td>
                   </tr>

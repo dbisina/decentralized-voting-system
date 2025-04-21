@@ -21,8 +21,8 @@ export const VoterRegistrationProvider = ({ children }) => {
     if (savedMode !== null) {
       return savedMode === 'true';
     }
-    // Default to development mode
-    return process.env.NODE_ENV === 'development';
+    // Default to false in all environments, including development
+    return false;
   });
   
   // Track different voter statuses per election
@@ -46,8 +46,8 @@ export const VoterRegistrationProvider = ({ children }) => {
       setIsLoading(true);
       setError(null);
 
-      // In development mode, treat all elections as registered if universal access is on
-      if (universalAccess) {
+      // In development mode with universal access enabled, treat all elections as registered
+      if (universalAccess && process.env.NODE_ENV === 'development') {
         console.log("DEV MODE: Universal election access enabled");
         
         // If we're in universal access mode, get all election IDs and set them as registered
@@ -78,31 +78,61 @@ export const VoterRegistrationProvider = ({ children }) => {
       const electionIds = [];
       const statuses = {};
       
-      // Add all elections with approved status or any status in dev mode
+      // Add all elections with approved status
       for (const ref of userRefs) {
         try {
           // Store status for this election
           statuses[ref.electionId] = ref.status || 'pending';
           
-          if (ref.status === 'approved' || universalAccess) {
+          // Only add to registered elections if status is approved
+          if (ref.status === 'approved') {
             electionIds.push(ref.electionId);
           } else {
-            // Get the full registration data from the hash
-            const registration = await ipfsService.getRegistration(ref.ipfsHash);
-            
-            // Update status if available
-            if (registration && registration.status) {
-              statuses[ref.electionId] = registration.status;
-            }
-            
-            // Only add to list if approved or in dev mode
-            if (registration && (registration.status === 'approved' || universalAccess)) {
-              electionIds.push(ref.electionId);
+            // Get the full registration data from the hash if available
+            try {
+              if (ref.ipfsHash) {
+                const registration = await ipfsService.getRegistration(ref.ipfsHash);
+                
+                // Update status if available
+                if (registration && registration.status) {
+                  statuses[ref.electionId] = registration.status;
+                }
+                
+                // Only add to list if approved
+                if (registration && registration.status === 'approved') {
+                  electionIds.push(ref.electionId);
+                }
+              }
+            } catch (fetchError) {
+              console.warn(`Error fetching registration: ${fetchError.message}`);
             }
           }
         } catch (err) {
-          console.warn(`Error loading registration ${ref.ipfsHash}:`, err);
+          console.warn(`Error processing registration ref:`, err);
         }
+      }
+      
+      // Also check allowed_voters entries in localStorage as a fallback
+      try {
+        // For each election with localStorage voter registration
+        const mockData = JSON.parse(localStorage.getItem('mock_blockchain_data') || '{}');
+        const allElectionIds = mockData.elections ? Object.keys(mockData.elections) : [];
+        
+        for (const electionId of allElectionIds) {
+          const key = `allowed_voters_${electionId}`;
+          const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
+          
+          if (allowedVoters.includes(account)) {
+            // This voter is approved for this election
+            const numericId = parseInt(electionId);
+            if (!electionIds.includes(numericId)) {
+              electionIds.push(numericId);
+              statuses[numericId] = 'approved';
+            }
+          }
+        }
+      } catch (fallbackError) {
+        console.warn("Error checking allowed_voters:", fallbackError);
       }
       
       setRegisteredElections(electionIds);
@@ -120,8 +150,8 @@ export const VoterRegistrationProvider = ({ children }) => {
 
   // Check if user is registered for a specific election
   const isRegisteredForElection = useCallback((electionId) => {
-    // In development mode with universal access, always return true
-    if (universalAccess) {
+    // FIX: Only allow universal access in development mode when explicitly enabled
+    if (universalAccess && process.env.NODE_ENV === 'development') {
       return true;
     }
     
@@ -138,32 +168,44 @@ export const VoterRegistrationProvider = ({ children }) => {
       const newValue = !prev;
       // Save to localStorage
       localStorage.setItem('universalAccessMode', newValue.toString());
+      console.log(`Universal access ${newValue ? 'enabled' : 'disabled'}`);
       return newValue;
     });
+    
+    // Reset initialLoad state to force a refresh
     initialLoadRef.current = {};
+    
+    // Force reload of registrations
     loadRegistrations(true);
   }, [loadRegistrations]);
-
   
   // Get status for a specific election
   const getVoterStatusForElection = useCallback((electionId) => {
-    if (universalAccess) return 'approved';
+    // FIX: Only allow universal access in development mode when explicitly enabled
+    if (universalAccess && process.env.NODE_ENV === 'development') {
+      return 'approved';
+    }
     return voterStatuses[electionId] || 'none';
   }, [voterStatuses, universalAccess]);
 
   // Get all registration statuses
   const getAllVoterStatuses = useCallback(() => {
-    if (universalAccess) {
+    // FIX: Only allow universal access in development mode when explicitly enabled
+    if (universalAccess && process.env.NODE_ENV === 'development') {
       // Return approved for all registrations if in universal access mode
-      return voterStatuses;
+      const allApproved = {...voterStatuses};
+      Object.keys(allApproved).forEach(key => {
+        allApproved[key] = 'approved';
+      });
+      return allApproved;
     }
     return voterStatuses;
   }, [voterStatuses, universalAccess]);
 
   // Check registration status
   const getRegistrationStatus = useCallback(async (electionId) => {
-    // In development mode with universal access, always return 'approved'
-    if (universalAccess) {
+    // FIX: Only allow universal access in development mode when explicitly enabled
+    if (universalAccess && process.env.NODE_ENV === 'development') {
       return 'approved';
     }
     
@@ -210,9 +252,20 @@ export const VoterRegistrationProvider = ({ children }) => {
         try {
           // Add to blockchain allowedVoters
           const contractWithSigner = contract.connect(signer);
-          const tx = await contractWithSigner.addAllowedVoter(electionId, account);
-          await tx.wait();
-          console.log(`Successfully added voter ${account} to blockchain for election ${electionId}`);
+          if (typeof contractWithSigner.addAllowedVoter === 'function') {
+            const tx = await contractWithSigner.addAllowedVoter(electionId, account);
+            await tx.wait();
+            console.log(`Successfully added voter ${account} to blockchain for election ${electionId}`);
+          } else {
+            // Fallback to localStorage
+            const key = `allowed_voters_${electionId}`;
+            const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
+            
+            if (!allowedVoters.includes(account)) {
+              allowedVoters.push(account);
+              localStorage.setItem(key, JSON.stringify(allowedVoters));
+            }
+          }
         } catch (blockchainError) {
           console.error('Error adding voter to blockchain:', blockchainError);
           
@@ -291,17 +344,6 @@ export const VoterRegistrationProvider = ({ children }) => {
           const tx = await contractWithSigner.addAllowedVoter(electionId, voterAddress);
           await tx.wait();
           console.log(`Successfully added voter ${voterAddress} to blockchain`, tx.hash);
-          
-          // Also update local storage as a backup
-          const key = `allowed_voters_${electionId}`;
-          const allowedVoters = JSON.parse(localStorage.getItem(key) || '[]');
-          
-          if (!allowedVoters.includes(voterAddress)) {
-            allowedVoters.push(voterAddress);
-            localStorage.setItem(key, JSON.stringify(allowedVoters));
-          }
-          
-          return true;
         } else {
           console.warn("Contract doesn't have addAllowedVoter function");
           
@@ -313,9 +355,42 @@ export const VoterRegistrationProvider = ({ children }) => {
             allowedVoters.push(voterAddress);
             localStorage.setItem(key, JSON.stringify(allowedVoters));
           }
-          
-          return true;
         }
+        
+        // Also update user_registrations for the voter
+        const userRefsKey = `user_registrations_${voterAddress}`;
+        const userRefs = JSON.parse(localStorage.getItem(userRefsKey) || '[]');
+        
+        // Find if we already have a reference for this election
+        const index = userRefs.findIndex(ref => ref.electionId == electionId);
+        const updatedRef = {
+          electionId: electionId,
+          status: 'approved',
+          updatedAt: new Date().toISOString()
+        };
+        
+        if (index >= 0) {
+          userRefs[index] = {...userRefs[index], ...updatedRef};
+        } else {
+          userRefs.push(updatedRef);
+        }
+        
+        localStorage.setItem(userRefsKey, JSON.stringify(userRefs));
+        
+        // If this affects the current user, update state
+        if (voterAddress.toLowerCase() === account?.toLowerCase()) {
+          setVoterStatuses(prev => ({
+            ...prev,
+            [electionId]: 'approved'
+          }));
+          
+          setRegisteredElections(prev => {
+            if (prev.some(id => id == electionId)) return prev;
+            return [...prev, parseInt(electionId)];
+          });
+        }
+        
+        return true;
       } catch (contractError) {
         console.error("Error calling contract method:", contractError);
         
@@ -336,7 +411,7 @@ export const VoterRegistrationProvider = ({ children }) => {
     } finally {
       setIsLoading(false);
     }
-  }, [contract, signer, ipfsService]);
+  }, [contract, signer, ipfsService, account]);
 
   // Reject a voter registration
   const rejectVoterRegistration = useCallback(async (electionId, voterAddress) => {
@@ -351,12 +426,37 @@ export const VoterRegistrationProvider = ({ children }) => {
       
       await ipfsService.updateRegistrationStatus(updatedRegistration, 'rejected');
       
+      // Update local storage reference
+      const userRefsKey = `user_registrations_${voterAddress}`;
+      const userRefs = JSON.parse(localStorage.getItem(userRefsKey) || '[]');
+      
+      // Find if we already have a reference for this election
+      const index = userRefs.findIndex(ref => ref.electionId == electionId);
+      const updatedRef = {
+        electionId: electionId,
+        status: 'rejected',
+        updatedAt: new Date().toISOString()
+      };
+      
+      if (index >= 0) {
+        userRefs[index] = {...userRefs[index], ...updatedRef};
+      } else {
+        userRefs.push(updatedRef);
+      }
+      
+      localStorage.setItem(userRefsKey, JSON.stringify(userRefs));
+      
       // Update local state if this is for the current user
       if (voterAddress.toLowerCase() === account?.toLowerCase()) {
         setVoterStatuses(prev => ({
           ...prev,
           [electionId]: 'rejected'
         }));
+        
+        // Remove from registered elections if present
+        setRegisteredElections(prev => 
+          prev.filter(id => id != electionId)
+        );
       }
       
       return true;
